@@ -1,0 +1,33 @@
+{
+  "name": "prophesee_evk4",
+  "description": "Prophesee EVK4 HD Metavision Sensor (1280x720 Mono EVS)",
+  "width": 1280,
+  "height": 720,
+  "pixel_pitch_um": 4.86,
+  "focal_length_mm": 8.0,
+  "fov_deg": 70.0,
+  "aps_fps": 0.0,
+  "exposure_time_ms": 0.0,
+  "cfa_pattern": "mono",
+  "cfa_size": 1,
+  "color_correction_matrix": [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0]
+  ],
+  "black_level": 0.005,
+  "white_level": 1.0,
+  "aps_noise_beta1": 0.0003,
+  "aps_noise_beta2": 0.00005,
+  "evs_fps": 1000.0,
+  "theta_hw": 0.00075,
+  "theta_scale": 1.0,
+  "refractory_period_us": 5.0,
+  "evs_betas": [
+    [
+      [1.00, 1.00, 0.008, 0.05, 0.005, 0.0]
+    ]
+  ],
+  "dark_event_rate_pos": 0.02,
+  "dark_event_rate_neg": 0.015
+}

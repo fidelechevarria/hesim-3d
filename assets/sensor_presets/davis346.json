@@ -1,0 +1,33 @@
+{
+  "name": "davis346",
+  "description": "iniVation DAVIS346 (346x260 APS+EVS)",
+  "width": 346,
+  "height": 260,
+  "pixel_pitch_um": 18.5,
+  "focal_length_mm": 4.5,
+  "fov_deg": 60.0,
+  "aps_fps": 30.0,
+  "exposure_time_ms": 10.0,
+  "cfa_pattern": "mono",
+  "cfa_size": 1,
+  "color_correction_matrix": [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0]
+  ],
+  "black_level": 0.02,
+  "white_level": 1.0,
+  "aps_noise_beta1": 0.001,
+  "aps_noise_beta2": 0.0003,
+  "evs_fps": 1000.0,
+  "theta_hw": 0.00075,
+  "theta_scale": 1.0,
+  "refractory_period_us": 20.0,
+  "evs_betas": [
+    [
+      [1.50, 1.00, 0.020, 0.12, 0.015, 0.0]
+    ]
+  ],
+  "dark_event_rate_pos": 0.10,
+  "dark_event_rate_neg": 0.08
+}

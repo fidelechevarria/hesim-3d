@@ -1,0 +1,75 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.9.0",
+    "nanobind>=2.0.0",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "hesim-3d"
+version = "0.1.0"
+description = "High-performance 3D trajectory simulator for Hybrid Event-Frame Sensors and Event Cameras"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Fidel Echevarria" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "numpy>=1.22.0",
+    "torch>=2.0.0",
+    "h5py>=3.8.0",
+    "mcap>=1.0.0",
+    "mcap-protobuf-support>=0.5.0",
+    "scipy>=1.9.0",
+    "opencv-python>=4.7.0",
+    "tqdm>=4.65.0",
+    "pyyaml>=6.0",
+    "requests>=2.28.0",
+    "click>=8.1.0",
+    "Pillow>=9.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+hesim3d = "hesim3d.cli:main"
+
+[tool.scikit-build]
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+ninja.make-fallback = true
+wheel.packages = ["src/hesim3d"]
+sdist.include = [
+    "src/**/*",
+    "assets/**/*",
+    "CMakeLists.txt",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+]
+sdist.exclude = [
+    "tests/**/*",
+    "docs/**/*",
+    "outputs/**/*",
+    "*.cache",
+]
+
+[tool.scikit-build.cmake.define]
+HESIM3D_BUILD_GUI = "ON"

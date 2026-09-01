@@ -1,0 +1,38 @@
+{
+  "name": "alpsentek_eiger",
+  "description": "AlpsenTek ALVium/Eiger 0.5MP Hybrid Quad-Bayer APS+EVS",
+  "width": 640,
+  "height": 480,
+  "pixel_pitch_um": 4.86,
+  "focal_length_mm": 6.0,
+  "fov_deg": 65.0,
+  "aps_fps": 30.0,
+  "exposure_time_ms": 10.0,
+  "cfa_pattern": "quad_bayer",
+  "cfa_size": 2,
+  "color_correction_matrix": [
+    [1.65, -0.45, -0.20],
+    [-0.25, 1.40, -0.15],
+    [-0.05, -0.35, 1.40]
+  ],
+  "black_level": 0.01,
+  "white_level": 1.0,
+  "aps_noise_beta1": 0.0005,
+  "aps_noise_beta2": 0.0001,
+  "evs_fps": 1000.0,
+  "theta_hw": 0.00075,
+  "theta_scale": 1.0,
+  "refractory_period_us": 10.0,
+  "evs_betas": [
+    [
+      [1.20, 1.00, 0.015, 0.08, 0.010, 0.0],
+      [1.15, 1.00, 0.012, 0.07, 0.009, 0.0]
+    ],
+    [
+      [1.18, 1.00, 0.014, 0.075, 0.010, 0.0],
+      [1.22, 1.00, 0.016, 0.085, 0.011, 0.0]
+    ]
+  ],
+  "dark_event_rate_pos": 0.05,
+  "dark_event_rate_neg": 0.03
+}

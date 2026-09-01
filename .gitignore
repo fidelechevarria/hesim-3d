@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.so.*
 *.pyd
 *.dylib
 
@@ -26,7 +27,7 @@ htmlcov/
 .ruff_cache/
 
 # ==============================================================================
-# C++ / CMake / Compilers
+# C++ / CMake / Compilers / Bundled Toolchain
 # ==============================================================================
 CMakeLists.txt.user
 CMakeCache.txt
@@ -45,9 +46,16 @@ compile_commands.json
 *.ninja
 .ninja_*
 
+# Toolchain & Libc++ generated headers / vendored binaries
+src/cpp/libcxx_include/
+src/hesim3d/libc++*
+src/hesim3d/*.so*
+src/hesim3d/_hesim3d_core*
+
 # Filament & Third-party builds
 third_party/filament/build/
 third_party/nanobind/build/
+_deps/
 
 # ==============================================================================
 # Datasets & Simulation Outputs (Archivos pesados)
