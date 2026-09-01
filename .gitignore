@@ -78,3 +78,4 @@ assets/scenes/*.cache
 *~
 .DS_Store
 Thumbs.db
+spec.md
