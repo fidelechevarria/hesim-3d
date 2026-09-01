@@ -1,0 +1,80 @@
+# ==============================================================================
+# Python & Packaging
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.dylib
+
+# Environments & Packaging
+.venv/
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+_skbuild/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ==============================================================================
+# C++ / CMake / Compilers
+# ==============================================================================
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+*.o
+*.a
+*.obj
+*.lib
+*.exp
+*.ninja
+.ninja_*
+
+# Filament & Third-party builds
+third_party/filament/build/
+third_party/nanobind/build/
+
+# ==============================================================================
+# Datasets & Simulation Outputs (Archivos pesados)
+# ==============================================================================
+outputs/
+*.h5
+*.hdf5
+*.mcap
+*.bag
+*.db3
+*.raw
+*.npy
+*.npz
+*.tar.gz
+*.zip
+
+# Evitar subir renders temporales o assets pesados generados
+assets/scenes/*.cache
+*.bin
+
+# ==============================================================================
+# IDEs & System
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
