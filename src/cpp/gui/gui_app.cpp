@@ -423,34 +423,186 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
         draw_list->AddText(ImVec2(kp.x + sz + 3, kp.y - sz), IM_COL32(255, 255, 255, 200), label.c_str());
     }
 
-    // Draw Camera Position & Frustum Cone
+    // Helper lambda to draw dashed line segments
+    auto draw_dashed_line = [&](const ImVec2& p0, const ImVec2& p1, ImU32 col, float thickness, float dash_len, float gap_len) {
+        float dx = p1.x - p0.x;
+        float dy = p1.y - p0.y;
+        float total_dist = std::sqrt(dx * dx + dy * dy);
+        if (total_dist < 1e-3f) return;
+        float dir_x = dx / total_dist;
+        float dir_y = dy / total_dist;
+        float step = dash_len + gap_len;
+        for (float d = 0.0f; d < total_dist; d += step) {
+            float d_end = std::min(d + dash_len, total_dist);
+            draw_list->AddLine(
+                ImVec2(p0.x + dir_x * d, p0.y + dir_y * d),
+                ImVec2(p0.x + dir_x * d_end, p0.y + dir_y * d_end),
+                col, thickness
+            );
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 3D Camera Coordinate System & Basis Vectors (Filament / OpenGL convention)
+    // -------------------------------------------------------------------------
     Eigen::Quaterniond q = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
     Eigen::Matrix3d R = q.toRotationMatrix();
-    Eigen::Vector3d look_dir = R * Eigen::Vector3d(0, 0, -1);
-    Eigen::Vector3d right_dir = R * Eigen::Vector3d(1, 0, 0);
+    Eigen::Vector3d look_dir = R * Eigen::Vector3d(0, 0, -1); // Forward (-Z)
+    Eigen::Vector3d right_dir = R * Eigen::Vector3d(1, 0, 0); // Right (+X)
+    Eigen::Vector3d up_dir = R * Eigen::Vector3d(0, 1, 0);    // Up (+Y)
 
     ImVec2 cam_screen = world_to_screen(camera_pos_);
-    float cone_len = 65.0f;
-    float fov_half_rad = deg_to_rad(28.0);
 
-    Eigen::Vector3d left_ray = (look_dir * std::cos(fov_half_rad) - right_dir * std::sin(fov_half_rad)).normalized();
-    Eigen::Vector3d right_ray = (look_dir * std::cos(fov_half_rad) + right_dir * std::sin(fov_half_rad)).normalized();
+    // -------------------------------------------------------------------------
+    // 1. Realistic 3D Camera Frustum Wireframe Pyramid (Google Earth Studio)
+    // -------------------------------------------------------------------------
+    // Camera intrinsics: 640x480, fx=400, fy=400 -> tan(fov_x/2) = 0.8, tan(fov_y/2) = 0.6
+    float aspect_ratio = static_cast<float>(sensor_tex_w_) / std::max(1.0f, static_cast<float>(sensor_tex_h_));
+    double tan_fov_y_half = 0.60;
+    double tan_fov_x_half = tan_fov_y_half * aspect_ratio; // 0.80
 
-    Eigen::Vector3d p_left_w = camera_pos_ + left_ray * (cone_len / std::max(0.01, scale));
-    Eigen::Vector3d p_right_w = camera_pos_ + right_ray * (cone_len / std::max(0.01, scale));
+    double frustum_screen_len = 105.0; // Readable pixel length in viewport
+    double frustum_depth_w = frustum_screen_len / std::max(0.001, scale);
+    double frustum_w = frustum_depth_w * tan_fov_x_half;
+    double frustum_h = frustum_depth_w * tan_fov_y_half;
 
-    ImVec2 p_left = world_to_screen(p_left_w);
-    ImVec2 p_right = world_to_screen(p_right_w);
+    // 4 corners of the far plane in 3D world space
+    Eigen::Vector3d far_center = camera_pos_ + look_dir * frustum_depth_w;
+    Eigen::Vector3d p_tl_w = far_center - right_dir * frustum_w + up_dir * frustum_h;
+    Eigen::Vector3d p_tr_w = far_center + right_dir * frustum_w + up_dir * frustum_h;
+    Eigen::Vector3d p_br_w = far_center + right_dir * frustum_w - up_dir * frustum_h;
+    Eigen::Vector3d p_bl_w = far_center - right_dir * frustum_w - up_dir * frustum_h;
 
-    // Filled Frustum Cone
-    draw_list->AddTriangleFilled(cam_screen, p_left, p_right, IM_COL32(0, 190, 255, 45));
-    draw_list->AddLine(cam_screen, p_left, IM_COL32(0, 220, 255, 220), 1.8f);
-    draw_list->AddLine(cam_screen, p_right, IM_COL32(0, 220, 255, 220), 1.8f);
-    draw_list->AddLine(p_left, p_right, IM_COL32(0, 220, 255, 180), 1.5f);
+    ImVec2 p_tl = world_to_screen(p_tl_w);
+    ImVec2 p_tr = world_to_screen(p_tr_w);
+    ImVec2 p_br = world_to_screen(p_br_w);
+    ImVec2 p_bl = world_to_screen(p_bl_w);
 
-    // Camera apex icon
-    draw_list->AddCircleFilled(cam_screen, 6.0f, IM_COL32(255, 80, 60, 255));
-    draw_list->AddCircle(cam_screen, 6.0f, IM_COL32(255, 255, 255, 255), 1.5f);
+    // Subtle translucent volumetric fill on frustum faces (glass effect)
+    draw_list->AddTriangleFilled(cam_screen, p_tl, p_tr, IM_COL32(230, 240, 255, 18));
+    draw_list->AddTriangleFilled(cam_screen, p_tr, p_br, IM_COL32(230, 240, 255, 14));
+    draw_list->AddTriangleFilled(cam_screen, p_br, p_bl, IM_COL32(230, 240, 255, 10));
+    draw_list->AddTriangleFilled(cam_screen, p_bl, p_tl, IM_COL32(230, 240, 255, 14));
+    draw_list->AddQuadFilled(p_tl, p_tr, p_br, p_bl, IM_COL32(0, 180, 255, 14));
+
+    // Optical Axis: dashed center line from camera apex through frustum base to target
+    Eigen::Vector3d target_w = camera_pos_ + look_dir * (frustum_depth_w * 1.85);
+    ImVec2 target_screen = world_to_screen(target_w);
+    draw_dashed_line(cam_screen, target_screen, IM_COL32(255, 255, 255, 175), 1.4f, 6.0f, 4.0f);
+    draw_list->AddCircle(target_screen, 3.5f, IM_COL32(255, 255, 255, 200), 12, 1.2f);
+
+    // 4 Corner Rays from Apex to Corners
+    ImU32 ray_col = IM_COL32(230, 240, 255, 200);
+    draw_list->AddLine(cam_screen, p_tl, ray_col, 1.6f);
+    draw_list->AddLine(cam_screen, p_tr, ray_col, 1.6f);
+    draw_list->AddLine(cam_screen, p_br, ray_col, 1.6f);
+    draw_list->AddLine(cam_screen, p_bl, ray_col, 1.6f);
+
+    // Far-plane rectangular base frame
+    ImU32 base_col = IM_COL32(240, 245, 255, 230);
+    draw_list->AddLine(p_tl, p_tr, base_col, 1.8f);
+    draw_list->AddLine(p_tr, p_br, base_col, 1.8f);
+    draw_list->AddLine(p_br, p_bl, base_col, 1.8f);
+    draw_list->AddLine(p_bl, p_tl, base_col, 1.8f);
+
+    // -------------------------------------------------------------------------
+    // 2. 3D Orange Camera Body Pyramid Glyph (Google Earth Studio signature)
+    // -------------------------------------------------------------------------
+    double body_len_px = 22.0;
+    double body_w_px = 13.0;
+    double body_h_px = 9.0;
+
+    double body_len_w = body_len_px / std::max(0.001, scale);
+    double body_w_w = body_w_px / std::max(0.001, scale);
+    double body_h_w = body_h_px / std::max(0.001, scale);
+
+    // Apex at camera center (pointing forward) and base extending backward
+    Eigen::Vector3d b_apex_w = camera_pos_ + look_dir * (body_len_w * 0.08);
+    Eigen::Vector3d b_base_center = camera_pos_ - look_dir * body_len_w;
+
+    Eigen::Vector3d b_tl_w = b_base_center - right_dir * body_w_w + up_dir * body_h_w;
+    Eigen::Vector3d b_tr_w = b_base_center + right_dir * body_w_w + up_dir * body_h_w;
+    Eigen::Vector3d b_br_w = b_base_center + right_dir * body_w_w - up_dir * body_h_w;
+    Eigen::Vector3d b_bl_w = b_base_center - right_dir * body_w_w - up_dir * body_h_w;
+
+    ImVec2 b_apex = world_to_screen(b_apex_w);
+    ImVec2 b_tl = world_to_screen(b_tl_w);
+    ImVec2 b_tr = world_to_screen(b_tr_w);
+    ImVec2 b_br = world_to_screen(b_br_w);
+    ImVec2 b_bl = world_to_screen(b_bl_w);
+
+    // Orthographic view direction for depth-sorting faces (painter's algorithm)
+    Eigen::Vector3d view_dir(0, 0, 0);
+    if (ortho_idx == 0) view_dir = Eigen::Vector3d(0, -1, 0);      // Top view (looking -Y)
+    else if (ortho_idx == 1) view_dir = Eigen::Vector3d(0, 0, -1); // Front view (looking -Z)
+    else view_dir = Eigen::Vector3d(-1, 0, 0);                     // Side view (looking -X)
+
+    // Lighting vector for 3D directional facet shading
+    Eigen::Vector3d light_dir = Eigen::Vector3d(0.35, 0.85, 0.40).normalized();
+
+    struct CameraBodyFace {
+        std::vector<ImVec2> pts_2d;
+        Eigen::Vector3d normal_3d;
+        Eigen::Vector3d center_3d;
+        double depth{0.0};
+        bool is_quad{false};
+    };
+
+    std::vector<CameraBodyFace> body_faces;
+
+    // Top Face (Apex, TR, TL)
+    Eigen::Vector3d n_top = (b_tr_w - b_apex_w).cross(b_tl_w - b_apex_w).normalized();
+    Eigen::Vector3d c_top = (b_apex_w + b_tr_w + b_tl_w) / 3.0;
+    body_faces.push_back({{b_apex, b_tr, b_tl}, n_top, c_top, c_top.dot(view_dir), false});
+
+    // Right Face (Apex, BR, TR)
+    Eigen::Vector3d n_right = (b_br_w - b_apex_w).cross(b_tr_w - b_apex_w).normalized();
+    Eigen::Vector3d c_right = (b_apex_w + b_br_w + b_tr_w) / 3.0;
+    body_faces.push_back({{b_apex, b_br, b_tr}, n_right, c_right, c_right.dot(view_dir), false});
+
+    // Bottom Face (Apex, BL, BR)
+    Eigen::Vector3d n_bot = (b_bl_w - b_apex_w).cross(b_br_w - b_apex_w).normalized();
+    Eigen::Vector3d c_bot = (b_apex_w + b_bl_w + b_br_w) / 3.0;
+    body_faces.push_back({{b_apex, b_bl, b_br}, n_bot, c_bot, c_bot.dot(view_dir), false});
+
+    // Left Face (Apex, TL, BL)
+    Eigen::Vector3d n_left = (b_tl_w - b_apex_w).cross(b_bl_w - b_apex_w).normalized();
+    Eigen::Vector3d c_left = (b_apex_w + b_tl_w + b_bl_w) / 3.0;
+    body_faces.push_back({{b_apex, b_tl, b_bl}, n_left, c_left, c_left.dot(view_dir), false});
+
+    // Back Quad (TL, TR, BR, BL)
+    Eigen::Vector3d n_back = -look_dir;
+    Eigen::Vector3d c_back = b_base_center;
+    body_faces.push_back({{b_tl, b_tr, b_br, b_bl}, n_back, c_back, c_back.dot(view_dir), true});
+
+    // Sort back-to-front (largest depth first along view_dir)
+    std::sort(body_faces.begin(), body_faces.end(), [](const CameraBodyFace& a, const CameraBodyFace& b) {
+        return a.depth > b.depth;
+    });
+
+    // Render sorted faces with Google Earth Studio directional orange tones
+    ImU32 outline_col = IM_COL32(40, 16, 10, 230);
+    for (const auto& face : body_faces) {
+        double dot = std::max(0.0, face.normal_3d.dot(light_dir));
+        double intensity = 0.48 + 0.52 * dot;
+
+        int r = std::clamp(static_cast<int>(255.0 * intensity), 120, 255);
+        int g = std::clamp(static_cast<int>(100.0 * intensity + 20.0 * (1.0 - intensity)), 40, 160);
+        int b = std::clamp(static_cast<int>(30.0 * intensity), 10, 65);
+        ImU32 face_col = IM_COL32(r, g, b, 255);
+
+        if (face.is_quad) {
+            draw_list->AddQuadFilled(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], face.pts_2d[3], face_col);
+            draw_list->AddQuad(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], face.pts_2d[3], outline_col, 1.2f);
+        } else {
+            draw_list->AddTriangleFilled(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], face_col);
+            draw_list->AddTriangle(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], outline_col, 1.2f);
+        }
+    }
+
+    // Camera center pivot dot
+    draw_list->AddCircleFilled(cam_screen, 4.0f, IM_COL32(255, 255, 255, 255));
+    draw_list->AddCircle(cam_screen, 4.0f, IM_COL32(230, 80, 25, 255), 16, 1.6f);
 }
 
 bool GuiApp::init() {
