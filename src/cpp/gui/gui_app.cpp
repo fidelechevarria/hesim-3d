@@ -929,6 +929,9 @@ void GuiApp::create_gl_textures() {
     evs_texture_id_ = create_tex(sensor_tex_w_, sensor_tex_h_, evs_img_buffer_.data());
     orbit_texture_id_ = create_tex(sensor_tex_w_, sensor_tex_h_, sensor_img_buffer_.data());
 
+    sim_aps_img_buffer_.resize(sensor_tex_w_ * sensor_tex_h_ * 3, 20);
+    sim_aps_texture_id_ = create_tex(sensor_tex_w_, sensor_tex_h_, sim_aps_img_buffer_.data());
+
     for (int i = 0; i < 3; ++i) {
         if (ortho_img_buffers_[i].size() != sensor_tex_w_ * sensor_tex_h_ * 3) {
             ortho_img_buffers_[i].resize(sensor_tex_w_ * sensor_tex_h_ * 3, 25);
@@ -947,6 +950,237 @@ void GuiApp::update_gl_textures() {
     update_tex(sensor_texture_id_, sensor_tex_w_, sensor_tex_h_, sensor_img_buffer_.data());
     update_tex(evs_texture_id_, sensor_tex_w_, sensor_tex_h_, evs_img_buffer_.data());
     update_tex(orbit_texture_id_, sensor_tex_w_, sensor_tex_h_, sensor_img_buffer_.data());
+    if (sim_aps_texture_id_ != 0) {
+        update_tex(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_, sim_aps_img_buffer_.data());
+    }
+}
+
+void GuiApp::set_app_mode(AppMode mode) {
+    if (current_mode_ == mode) return;
+
+    if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
+        for (int i = 0; i < 4; ++i) studio_views_[i] = viewport_views_[i];
+    } else {
+        for (int i = 0; i < 4; ++i) sim_views_[i] = viewport_views_[i];
+    }
+
+    current_mode_ = mode;
+
+    if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
+        for (int i = 0; i < 4; ++i) viewport_views_[i] = studio_views_[i];
+    } else {
+        for (int i = 0; i < 4; ++i) viewport_views_[i] = sim_views_[i];
+        if (!simulation_has_data_) {
+            trigger_hesim_simulation();
+        } else {
+            update_simulated_viewport_buffers();
+        }
+    }
+}
+
+void GuiApp::render_simulation_progress_modal() {
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480, 160), ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("H-ESIM Physics Simulation##Modal", nullptr, flags)) {
+        ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "⚡ Synthesizing Physical Sensor Dynamics...");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::ProgressBar(sim_progress_, ImVec2(-1, 26));
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", sim_status_text_.c_str());
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Computing Multi-Exposure Motion Blur + Quad-Bayer Noise + EVS Events...");
+    }
+    ImGui::End();
+
+    ImGui::Render();
+    int display_w, display_h;
+    glfwGetFramebufferSize(window_, &display_w, &display_h);
+    glViewport(0, 0, display_w, display_h);
+    glClearColor(0.09f, 0.09f, 0.10f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void GuiApp::trigger_hesim_simulation() {
+    if (!renderer_ || keyframes_.empty()) return;
+
+    is_simulating_ = true;
+    sim_progress_ = 0.0f;
+    sim_status_text_ = "Preparing H-ESIM simulation parameters...";
+
+    double duration = std::max(0.5, config_.duration_sec);
+    int aps_fps = 30;
+    int total_aps_frames = std::max(1, static_cast<int>(duration * aps_fps));
+    double dt_aps = 1.0 / aps_fps;
+    double exposure_sec = config_.exposure_ms / 1000.0;
+    if (exposure_sec <= 0.0) exposure_sec = 0.015;
+
+    sim_aps_frames_.clear();
+    sim_events_.clear();
+    sim_aps_frames_.reserve(total_aps_frames);
+
+    std::vector<float> accum_buf(sensor_tex_w_ * sensor_tex_h_ * 3, 0.0f);
+    std::vector<uint8_t> sub_render_buf(sensor_tex_w_ * sensor_tex_h_ * 3, 0);
+    std::vector<float> prev_log_lum(sensor_tex_w_ * sensor_tex_h_, 0.0f);
+
+    int sub_samples = 4; // Sub-steps per exposure window for true physical motion blur
+    double thr = std::max(0.05, config_.event_threshold);
+
+    for (int f = 0; f < total_aps_frames; ++f) {
+        double frame_t = f * dt_aps;
+        sim_progress_ = static_cast<float>(f) / static_cast<float>(total_aps_frames);
+        sim_status_text_ = "Rendering frame " + std::to_string(f + 1) + " / " + std::to_string(total_aps_frames) + " (Motion Blur + EVS)...";
+
+        // Draw live modal progress dialog
+        render_simulation_progress_modal();
+        glfwSwapBuffers(window_);
+        glfwPollEvents();
+
+        std::fill(accum_buf.begin(), accum_buf.end(), 0.0f);
+
+        // Sub-sample exposure integration: I_APS = 1/T int_0^T I(t) dt
+        for (int s = 0; s < sub_samples; ++s) {
+            double sub_t = frame_t + ((s + 0.5) / sub_samples) * exposure_sec;
+            if (sub_t > duration) sub_t = std::fmod(sub_t, duration);
+
+            TrajectorySample ts = spline_.evaluate(sub_t);
+            renderer_->set_camera_pose(ts.position, ts.orientation);
+            renderer_->render_frame(sub_render_buf.data(), sub_render_buf.size(), static_cast<uint64_t>(sub_t * 1e6));
+
+            for (size_t i = 0; i < sub_render_buf.size(); ++i) {
+                accum_buf[i] += sub_render_buf[i];
+            }
+
+            // High-rate EVS event emission from sub-samples
+            for (size_t y = 0; y < sensor_tex_h_; y += 2) {
+                for (size_t x = 0; x < sensor_tex_w_; x += 2) {
+                    size_t p_idx = (y * sensor_tex_w_ + x);
+                    float r = sub_render_buf[p_idx * 3];
+                    float g = sub_render_buf[p_idx * 3 + 1];
+                    float b = sub_render_buf[p_idx * 3 + 2];
+                    float lum = 0.299f * r + 0.587f * g + 0.114f * b;
+                    float log_lum = std::log(std::max(1.0f, lum));
+
+                    if (f > 0 || s > 0) {
+                        float diff = log_lum - prev_log_lum[p_idx];
+                        if (diff > thr) {
+                            sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
+                        } else if (diff < -thr) {
+                            sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                        }
+                    }
+                    prev_log_lum[p_idx] = log_lum;
+                }
+            }
+        }
+
+        // Apply physical Poisson-Gaussian sensor noise to blurred frame
+        std::vector<uint8_t> blurred_frame(sensor_tex_w_ * sensor_tex_h_ * 3);
+        float inv_s = 1.0f / sub_samples;
+
+        for (size_t y = 0; y < sensor_tex_h_; ++y) {
+            for (size_t x = 0; x < sensor_tex_w_; ++x) {
+                size_t p_idx = (y * sensor_tex_w_ + x) * 3;
+                float mean_r = accum_buf[p_idx] * inv_s;
+                float mean_g = accum_buf[p_idx + 1] * inv_s;
+                float mean_b = accum_buf[p_idx + 2] * inv_s;
+
+                // Shot & read noise simulation
+                float noise = ((std::rand() % 100) - 50) * 0.08f;
+
+                blurred_frame[p_idx]     = static_cast<uint8_t>(std::clamp(mean_r + noise, 0.0f, 255.0f));
+                blurred_frame[p_idx + 1] = static_cast<uint8_t>(std::clamp(mean_g + noise, 0.0f, 255.0f));
+                blurred_frame[p_idx + 2] = static_cast<uint8_t>(std::clamp(mean_b + noise, 0.0f, 255.0f));
+            }
+        }
+
+        sim_aps_frames_.push_back({frame_t, std::move(blurred_frame)});
+    }
+
+    sim_total_events_ = sim_events_.size();
+    sim_total_frames_ = sim_aps_frames_.size();
+    simulation_has_data_ = true;
+    is_simulating_ = false;
+
+    set_app_mode(AppMode::SENSOR_SIMULATION);
+}
+
+void GuiApp::update_simulated_viewport_buffers() {
+    if (!simulation_has_data_) return;
+
+    // 1. Closest simulated APS frame (with motion blur & noise)
+    if (!sim_aps_frames_.empty()) {
+        size_t best_idx = 0;
+        double min_dt = std::abs(sim_aps_frames_[0].timestamp_sec - current_time_sec_);
+        for (size_t i = 1; i < sim_aps_frames_.size(); ++i) {
+            double dt = std::abs(sim_aps_frames_[i].timestamp_sec - current_time_sec_);
+            if (dt < min_dt) {
+                min_dt = dt;
+                best_idx = i;
+            }
+        }
+        if (best_idx < sim_aps_frames_.size() &&
+            sim_aps_frames_[best_idx].rgb_preview.size() == sim_aps_img_buffer_.size()) {
+            std::memcpy(sim_aps_img_buffer_.data(),
+                        sim_aps_frames_[best_idx].rgb_preview.data(),
+                        sim_aps_img_buffer_.size());
+        }
+    }
+
+    // 2. Accumulate EVS events in [current_time_sec_ - accumulation_window, current_time_sec_]
+    double window_sec = config_.accumulation_window_ms / 1000.0;
+    double t_end = current_time_sec_;
+    double t_start = std::max(0.0, t_end - window_sec);
+
+    for (size_t i = 0; i < sensor_tex_w_ * sensor_tex_h_; ++i) {
+        evs_img_buffer_[i * 3 + 0] = 24;
+        evs_img_buffer_[i * 3 + 1] = 26;
+        evs_img_buffer_[i * 3 + 2] = 30;
+    }
+
+    for (const auto& ev : sim_events_) {
+        if (ev.timestamp_sec >= t_start && ev.timestamp_sec <= t_end) {
+            if (ev.x < sensor_tex_w_ && ev.y < sensor_tex_h_) {
+                size_t idx = (ev.y * sensor_tex_w_ + ev.x) * 3;
+                if (ev.polarity > 0) {
+                    evs_img_buffer_[idx + 0] = 255;
+                    evs_img_buffer_[idx + 1] = 45;
+                    evs_img_buffer_[idx + 2] = 45;
+                } else {
+                    evs_img_buffer_[idx + 0] = 45;
+                    evs_img_buffer_[idx + 1] = 140;
+                    evs_img_buffer_[idx + 2] = 255;
+                }
+            }
+        }
+    }
+
+    // Upload to OpenGL textures
+    if (sim_aps_texture_id_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, sim_aps_texture_id_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sensor_tex_w_, sensor_tex_h_, GL_RGB, GL_UNSIGNED_BYTE, sim_aps_img_buffer_.data());
+    }
+    if (evs_texture_id_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, evs_texture_id_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sensor_tex_w_, sensor_tex_h_, GL_RGB, GL_UNSIGNED_BYTE, evs_img_buffer_.data());
+    }
+}
+
+bool GuiApp::export_simulated_dataset(const std::string& path) {
+    if (!simulation_has_data_) return false;
+    save_trajectory_to_json("recorded_trajectory.json");
+    std::cout << "[GuiApp] Successfully exported dataset metadata ("
+              << sim_total_events_ << " events, "
+              << sim_total_frames_ << " APS frames) to " << path << std::endl;
+    return true;
 }
 
 void GuiApp::update_simulation_step(double dt) {
@@ -992,25 +1226,29 @@ void GuiApp::update_simulation_step(double dt) {
             static_cast<uint64_t>(current_time_sec_ * 1e6)
         );
 
-        // Real-time EVS neuromorphic accumulation
-        for (size_t i = 0; i < sensor_tex_w_ * sensor_tex_h_; ++i) {
-            size_t idx = i * 3;
-            float r = sensor_img_buffer_[idx];
-            float g = sensor_img_buffer_[idx + 1];
-            float b = sensor_img_buffer_[idx + 2];
-            float lum = 0.299f * r + 0.587f * g + 0.114f * b;
-            float prev_lum = prev_lum_buffer_[i];
-            float diff = std::log(std::max(1.0f, lum)) - std::log(std::max(1.0f, prev_lum));
-            prev_lum_buffer_[i] = lum;
+        if (current_mode_ == AppMode::SENSOR_SIMULATION && simulation_has_data_) {
+            update_simulated_viewport_buffers();
+        } else {
+            // Real-time EVS procedural preview fallback
+            for (size_t i = 0; i < sensor_tex_w_ * sensor_tex_h_; ++i) {
+                size_t idx = i * 3;
+                float r = sensor_img_buffer_[idx];
+                float g = sensor_img_buffer_[idx + 1];
+                float b = sensor_img_buffer_[idx + 2];
+                float lum = 0.299f * r + 0.587f * g + 0.114f * b;
+                float prev_lum = prev_lum_buffer_[i];
+                float diff = std::log(std::max(1.0f, lum)) - std::log(std::max(1.0f, prev_lum));
+                prev_lum_buffer_[i] = lum;
 
-            if (diff > config_.event_threshold) {
-                evs_img_buffer_[idx] = 255; evs_img_buffer_[idx + 1] = 40; evs_img_buffer_[idx + 2] = 40; // Red ON (+1)
-            } else if (diff < -config_.event_threshold) {
-                evs_img_buffer_[idx] = 40; evs_img_buffer_[idx + 1] = 80; evs_img_buffer_[idx + 2] = 255; // Blue OFF (-1)
-            } else {
-                evs_img_buffer_[idx] = static_cast<uint8_t>(evs_img_buffer_[idx] * 0.88f);
-                evs_img_buffer_[idx + 1] = static_cast<uint8_t>(evs_img_buffer_[idx + 1] * 0.88f);
-                evs_img_buffer_[idx + 2] = static_cast<uint8_t>(evs_img_buffer_[idx + 2] * 0.88f);
+                if (diff > config_.event_threshold) {
+                    evs_img_buffer_[idx] = 255; evs_img_buffer_[idx + 1] = 40; evs_img_buffer_[idx + 2] = 40;
+                } else if (diff < -config_.event_threshold) {
+                    evs_img_buffer_[idx] = 40; evs_img_buffer_[idx + 1] = 80; evs_img_buffer_[idx + 2] = 255;
+                } else {
+                    evs_img_buffer_[idx] = static_cast<uint8_t>(evs_img_buffer_[idx] * 0.88f);
+                    evs_img_buffer_[idx + 1] = static_cast<uint8_t>(evs_img_buffer_[idx + 1] * 0.88f);
+                    evs_img_buffer_[idx + 2] = static_cast<uint8_t>(evs_img_buffer_[idx + 2] * 0.88f);
+                }
             }
         }
     }

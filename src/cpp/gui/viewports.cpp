@@ -134,25 +134,34 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
     if (ImGui::Begin(win_id.c_str(), nullptr, flags)) {
         // Top Toolbar inside each Viewport (Google Earth Studio Dropdown)
         const char* view_names[] = {
-            "Camera (Live Sensor)",
+            "Camera (Clean Look-Through)",
             "EVS Events (Accumulation)",
             "Top (Top Ortho)",
             "Front (Front Ortho)",
             "Side (Side Ortho)",
             "3D Perspective",
-            "IMU Telemetry"
+            "IMU Telemetry",
+            "Simulated APS (Blur + Noise)"
         };
 
         int cur_view = static_cast<int>(viewport_views_[quad_idx]);
-        ImGui::SetNextItemWidth(175);
+        ImGui::SetNextItemWidth(190);
         std::string combo_id = "⚙ View##" + std::to_string(quad_idx);
-        if (ImGui::Combo(combo_id.c_str(), &cur_view, view_names, 7)) {
+        if (ImGui::Combo(combo_id.c_str(), &cur_view, view_names, 8)) {
             viewport_views_[quad_idx] = static_cast<ViewportContent>(cur_view);
         }
 
         ImGui::SameLine();
-        if (viewport_views_[quad_idx] == ViewportContent::CAMERA_SENSOR) {
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Left Click: Pan | Right Click: Dolly | Middle Click: Orbit | Q/E: Roll]");
+        if (viewport_views_[quad_idx] == ViewportContent::CAMERA_CLEAN) {
+            if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Clean 3D Look-Through | Left: Pan | Right: Dolly | Mid: Orbit | Q/E: Roll]");
+            } else {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Clean Ground Truth (Filament Reference)]");
+            }
+        } else if (viewport_views_[quad_idx] == ViewportContent::SIMULATED_APS_SENSOR) {
+            ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f), "[Physical Sensor APS | Multi-Exposure Blur + Poisson Noise + CFA]");
+        } else if (viewport_views_[quad_idx] == ViewportContent::EVS_ACCUMULATION) {
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "[EVS Events Slice | Red: ON (+1) | Blue: OFF (-1)]");
         } else if (viewport_views_[quad_idx] == ViewportContent::TOP_ORTHO) {
             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Top Ortho | X-Z]");
             ImGui::SameLine();
@@ -174,6 +183,8 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
             if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(1);
             ImGui::SameLine();
             ImGui::TextDisabled("| Right/Mid Drag: Pan | Wheel: Zoom | Drag KF: Edit");
+        } else if (viewport_views_[quad_idx] == ViewportContent::IMU_TELEMETRY) {
+            ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.7f, 1.0f), "[IMU Telemetry | Gyroscope (deg/s) + Accelerometer (m/s²)]");
         }
 
         ImGui::Separator();
@@ -213,9 +224,13 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
 
         // Render viewport contents
         switch (viewport_views_[quad_idx]) {
-            case ViewportContent::CAMERA_SENSOR:
+            case ViewportContent::CAMERA_CLEAN:
                 render_aspect_image(sensor_texture_id_, sensor_tex_w_, sensor_tex_h_);
                 handle_camera_mouse_input(canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
+                break;
+
+            case ViewportContent::SIMULATED_APS_SENSOR:
+                render_aspect_image(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_);
                 break;
 
             case ViewportContent::EVS_ACCUMULATION:

@@ -26,14 +26,33 @@ enum class MultiViewLayout {
     VIEW_4_GRID
 };
 
+enum class AppMode {
+    TRAJECTORY_STUDIO = 0,
+    SENSOR_SIMULATION
+};
+
 enum class ViewportContent {
-    CAMERA_SENSOR = 0,
-    EVS_ACCUMULATION,
-    TOP_ORTHO,
-    FRONT_ORTHO,
-    SIDE_ORTHO,
-    WORLD_3D_ORBIT,
-    IMU_TELEMETRY
+    CAMERA_CLEAN = 0,
+    EVS_ACCUMULATION = 1,
+    TOP_ORTHO = 2,
+    FRONT_ORTHO = 3,
+    SIDE_ORTHO = 4,
+    WORLD_3D_ORBIT = 5,
+    IMU_TELEMETRY = 6,
+    SIMULATED_APS_SENSOR = 7,
+    CAMERA_SENSOR = 0 // backward-compatible alias
+};
+
+struct SimulatedApsFrame {
+    double timestamp_sec{0.0};
+    std::vector<uint8_t> rgb_preview;
+};
+
+struct SimulatedEvent {
+    double timestamp_sec{0.0};
+    uint16_t x{0};
+    uint16_t y{0};
+    int8_t polarity{0};
 };
 
 enum class TrajectoryInterpolation {
@@ -111,13 +130,40 @@ private:
     Eigen::Vector3d camera_target_{0.0, 180.0, 0.0};
     double orbit_radius_{400.0};
 
-    // Multi-View Layout Configuration
+    // Multi-View & Workflow Mode Configuration
+    AppMode current_mode_{AppMode::TRAJECTORY_STUDIO};
+    std::atomic<bool> is_simulating_{false};
+    std::atomic<float> sim_progress_{0.0f};
+    std::string sim_status_text_{""};
+    bool simulation_has_data_{false};
+    size_t sim_total_events_{0};
+    size_t sim_total_frames_{0};
+
+    std::vector<SimulatedApsFrame> sim_aps_frames_;
+    std::vector<SimulatedEvent> sim_events_;
+    uint32_t sim_aps_texture_id_{0};
+    std::vector<uint8_t> sim_aps_img_buffer_;
+
+    ViewportContent studio_views_[4]{
+        ViewportContent::TOP_ORTHO,
+        ViewportContent::CAMERA_CLEAN,
+        ViewportContent::SIDE_ORTHO,
+        ViewportContent::FRONT_ORTHO
+    };
+
+    ViewportContent sim_views_[4]{
+        ViewportContent::CAMERA_CLEAN,
+        ViewportContent::SIMULATED_APS_SENSOR,
+        ViewportContent::EVS_ACCUMULATION,
+        ViewportContent::IMU_TELEMETRY
+    };
+
     MultiViewLayout active_layout_{MultiViewLayout::VIEW_4_GRID};
     ViewportContent viewport_views_[4]{
         ViewportContent::TOP_ORTHO,
-        ViewportContent::CAMERA_SENSOR,
+        ViewportContent::CAMERA_CLEAN,
         ViewportContent::SIDE_ORTHO,
-        ViewportContent::EVS_ACCUMULATION
+        ViewportContent::FRONT_ORTHO
     };
 
     // Resizable Splitters
@@ -162,6 +208,7 @@ private:
     void render_timeline_panel();
     void render_single_viewport(int quad_idx, const std::string& name, ViewportContent content);
     void render_imu_plots_content();
+    void render_simulation_progress_modal();
 
     // 2D Orthographic Draw & Mouse Input Helpers
     void draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, float min_y, float max_x, float max_y);
@@ -169,6 +216,12 @@ private:
     void update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h);
     void frame_ortho_view(int ortho_idx);
     void handle_camera_mouse_input(float min_x, float min_y, float max_x, float max_y);
+
+    // Workflow & Simulation Methods
+    void set_app_mode(AppMode mode);
+    void trigger_hesim_simulation();
+    void update_simulated_viewport_buffers();
+    bool export_simulated_dataset(const std::string& path);
 
     void update_simulation_step(double dt);
     void create_gl_textures();

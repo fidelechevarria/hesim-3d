@@ -74,6 +74,28 @@ void GuiApp::render_header_bar() {
 
             ImGui::Separator();
 
+            // Mode Switcher Tabs
+            bool is_studio = (current_mode_ == AppMode::TRAJECTORY_STUDIO);
+            bool is_sim = (current_mode_ == AppMode::SENSOR_SIMULATION);
+
+            if (is_studio) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.85f, 1.0f, 1.0f));
+            }
+            if (ImGui::MenuItem("🛠 Trajectory Studio", nullptr, is_studio)) {
+                set_app_mode(AppMode::TRAJECTORY_STUDIO);
+            }
+            if (is_studio) ImGui::PopStyleColor();
+
+            if (is_sim) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.95f, 0.55f, 1.0f));
+            }
+            if (ImGui::MenuItem("🔬 Sensor Simulation", nullptr, is_sim)) {
+                set_app_mode(AppMode::SENSOR_SIMULATION);
+            }
+            if (is_sim) ImGui::PopStyleColor();
+
+            ImGui::Separator();
+
             // Scenario & Sensor Quick Info
             ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "Scene: %s", config_.scene_path.empty() ? "Checkerboard" : "Sponza");
             ImGui::SameLine();
@@ -114,24 +136,34 @@ void GuiApp::render_header_bar() {
             int total_frames = static_cast<int>(config_.duration_sec * 30.0);
             ImGui::Text("%02d:%05.2fs [%d/%d f]", static_cast<int>(current_time_sec_ / 60.0), std::fmod(current_time_sec_, 60.0), cur_frame, total_frames);
 
-            // Right side: Recording / Export button
-            float right_pos = vp->Size.x - 170.0f;
-            if (right_pos > ImGui::GetCursorPosX()) {
-                ImGui::SetCursorPosX(right_pos);
-            }
-
-            if (!is_recording_) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.25f, 0.25f, 1.0f));
-                if (ImGui::Button("[REC] Render H5", ImVec2(150, 22))) {
-                    is_recording_ = true;
+            // Right side: Action controls per mode
+            if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
+                float right_pos = vp->Size.x - 240.0f;
+                if (right_pos > ImGui::GetCursorPosX()) {
+                    ImGui::SetCursorPosX(right_pos);
                 }
-                ImGui::PopStyleColor();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.60f, 0.45f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.72f, 0.55f, 1.0f));
+                if (ImGui::Button("⚡ Run H-ESIM Simulation", ImVec2(225, 22))) {
+                    trigger_hesim_simulation();
+                }
+                ImGui::PopStyleColor(2);
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.75f, 0.35f, 1.0f));
-                if (ImGui::Button("[STOP] Save Dataset", ImVec2(150, 22))) {
-                    is_recording_ = false;
+                float right_pos = vp->Size.x - 420.0f;
+                if (right_pos > ImGui::GetCursorPosX()) {
+                    ImGui::SetCursorPosX(right_pos);
+                }
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.55f, 1.0f), "[%zu Evts | %zu F]", sim_total_events_, sim_total_frames_);
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.45f, 0.75f, 1.0f));
+                if (ImGui::Button("💾 Export (.h5)", ImVec2(110, 22))) {
+                    export_simulated_dataset(recording_output_path_);
                 }
                 ImGui::PopStyleColor();
+                ImGui::SameLine();
+                if (ImGui::Button("← Return to Studio", ImVec2(140, 22))) {
+                    set_app_mode(AppMode::TRAJECTORY_STUDIO);
+                }
             }
 
             ImGui::EndMenuBar();
