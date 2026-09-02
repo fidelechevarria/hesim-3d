@@ -22,10 +22,10 @@ void GuiApp::render_header_bar() {
         if (ImGui::BeginMenuBar()) {
             // 1. File Menu
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("💾 Save Trajectory (.json)...")) {
+                if (ImGui::MenuItem("Save Trajectory (.json)...")) {
                     save_trajectory_to_json(current_trajectory_file_);
                 }
-                if (ImGui::MenuItem("📂 Load Trajectory (.json)...")) {
+                if (ImGui::MenuItem("Load Trajectory (.json)...")) {
                     load_trajectory_from_json(current_trajectory_file_);
                 }
                 ImGui::Separator();
@@ -37,10 +37,10 @@ void GuiApp::render_header_bar() {
 
             // 2. Edit Menu
             if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("➕ Capture Current Keyframe", "K")) {
+                if (ImGui::MenuItem("Capture Current Keyframe", "K")) {
                     capture_keyframe_at_current_time();
                 }
-                if (ImGui::MenuItem("🗑 Delete Selected Keyframe")) {
+                if (ImGui::MenuItem("Delete Selected Keyframe")) {
                     if (selected_keyframe_idx_ >= 0) delete_keyframe(selected_keyframe_idx_);
                 }
                 ImGui::EndMenu();
@@ -64,7 +64,7 @@ void GuiApp::render_header_bar() {
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("↺ Reset Default Layout")) {
+                if (ImGui::MenuItem("Reset Default Layout")) {
                     split_ratio_x_ = 0.5f;
                     split_ratio_y_ = 0.5f;
                     timeline_height_px_ = 280.0f;
@@ -99,9 +99,9 @@ void GuiApp::render_header_bar() {
             }
             ImGui::SameLine();
             if (is_playing_) {
-                if (ImGui::Button("❚❚##pause", ImVec2(36, 22))) is_playing_ = false;
+                if (ImGui::Button("||##pause", ImVec2(36, 22))) is_playing_ = false;
             } else {
-                if (ImGui::Button("▶##play", ImVec2(36, 22))) is_playing_ = true;
+                if (ImGui::Button(">##play", ImVec2(36, 22))) is_playing_ = true;
             }
             ImGui::SameLine();
             if (ImGui::Button(">##next", ImVec2(28, 22))) {
@@ -122,13 +122,13 @@ void GuiApp::render_header_bar() {
 
             if (!is_recording_) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.25f, 0.25f, 1.0f));
-                if (ImGui::Button("● Render H5", ImVec2(150, 22))) {
+                if (ImGui::Button("[REC] Render H5", ImVec2(150, 22))) {
                     is_recording_ = true;
                 }
                 ImGui::PopStyleColor();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.75f, 0.35f, 1.0f));
-                if (ImGui::Button("■ Save Dataset", ImVec2(150, 22))) {
+                if (ImGui::Button("[STOP] Save Dataset", ImVec2(150, 22))) {
                     is_recording_ = false;
                 }
                 ImGui::PopStyleColor();
@@ -183,11 +183,11 @@ void GuiApp::render_timeline_panel() {
 
     if (ImGui::Begin("##EarthStudioTimeline", nullptr, flags)) {
         // Toolbar inside timeline
-        if (ImGui::Button("➕ Capture Keyframe", ImVec2(160, 24))) {
+        if (ImGui::Button("+ Capture Keyframe", ImVec2(160, 24))) {
             capture_keyframe_at_current_time();
         }
         ImGui::SameLine();
-        if (ImGui::Button("🗑 Delete", ImVec2(80, 24))) {
+        if (ImGui::Button("Delete", ImVec2(80, 24))) {
             if (selected_keyframe_idx_ >= 0) delete_keyframe(selected_keyframe_idx_);
         }
         ImGui::SameLine();
@@ -206,11 +206,11 @@ void GuiApp::render_timeline_panel() {
             current_trajectory_file_ = file_buf;
         }
         ImGui::SameLine();
-        if (ImGui::Button("💾 Save", ImVec2(80, 24))) {
+        if (ImGui::Button("Save", ImVec2(80, 24))) {
             save_trajectory_to_json(current_trajectory_file_);
         }
         ImGui::SameLine();
-        if (ImGui::Button("📂 Load", ImVec2(80, 24))) {
+        if (ImGui::Button("Load", ImVec2(80, 24))) {
             load_trajectory_from_json(current_trajectory_file_);
         }
 
@@ -224,7 +224,7 @@ void GuiApp::render_timeline_panel() {
         ImGui::BeginChild("##TrackHierarchy", ImVec2(left_track_w, 0), true);
 
         // Track 1: Position
-        if (ImGui::TreeNodeEx("▾ Camera Position", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::TreeNodeEx("Camera Position", ImGuiTreeNodeFlags_DefaultOpen)) {
             float x = static_cast<float>(camera_pos_.x());
             float y = static_cast<float>(camera_pos_.y());
             float z = static_cast<float>(camera_pos_.z());
@@ -232,41 +232,41 @@ void GuiApp::render_timeline_panel() {
             ImGui::SetNextItemWidth(120);
             if (ImGui::DragFloat("Longitude (X)", &x, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.x() = x;
             ImGui::SameLine();
-            if (ImGui::SmallButton("◆##kfx")) capture_keyframe_at_current_time();
+            if (ImGui::SmallButton("[+]##kfx")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
             if (ImGui::DragFloat("Latitude (Z)", &z, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.z() = z;
             ImGui::SameLine();
-            if (ImGui::SmallButton("◆##kfz")) capture_keyframe_at_current_time();
+            if (ImGui::SmallButton("[+]##kfz")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
             if (ImGui::DragFloat("Altitude (Y)", &y, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.y() = y;
             ImGui::SameLine();
-            if (ImGui::SmallButton("◆##kfy")) capture_keyframe_at_current_time();
+            if (ImGui::SmallButton("[+]##kfy")) capture_keyframe_at_current_time();
 
             ImGui::TreePop();
         }
 
         // Track 2: Rotation
-        if (ImGui::TreeNodeEx("▾ Camera Rotation", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::TreeNodeEx("Camera Rotation", ImGuiTreeNodeFlags_DefaultOpen)) {
             float yaw = static_cast<float>(camera_yaw_deg_);
             float pitch = static_cast<float>(camera_pitch_deg_);
             float roll = static_cast<float>(camera_roll_deg_);
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Pan (Yaw)", &yaw, 0.5f, -180.0f, 180.0f, "%.1f°")) camera_yaw_deg_ = yaw;
+            if (ImGui::DragFloat("Pan (Yaw)", &yaw, 0.5f, -180.0f, 180.0f, "%.1f deg")) camera_yaw_deg_ = yaw;
             ImGui::SameLine();
-            if (ImGui::SmallButton("◆##kfyaw")) capture_keyframe_at_current_time();
+            if (ImGui::SmallButton("[+]##kfyaw")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Tilt (Pitch)", &pitch, 0.5f, -89.0f, 89.0f, "%.1f°")) camera_pitch_deg_ = pitch;
+            if (ImGui::DragFloat("Tilt (Pitch)", &pitch, 0.5f, -89.0f, 89.0f, "%.1f deg")) camera_pitch_deg_ = pitch;
             ImGui::SameLine();
-            if (ImGui::SmallButton("◆##kfpitch")) capture_keyframe_at_current_time();
+            if (ImGui::SmallButton("[+]##kfpitch")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Roll", &roll, 0.5f, -180.0f, 180.0f, "%.1f°")) camera_roll_deg_ = roll;
+            if (ImGui::DragFloat("Roll", &roll, 0.5f, -180.0f, 180.0f, "%.1f deg")) camera_roll_deg_ = roll;
             ImGui::SameLine();
-            if (ImGui::SmallButton("◆##kfroll")) capture_keyframe_at_current_time();
+            if (ImGui::SmallButton("[+]##kfroll")) capture_keyframe_at_current_time();
 
             ImGui::TreePop();
         }

@@ -631,6 +631,19 @@ bool GuiApp::init() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Load clean TrueType font if available on Linux system
+    const char* font_candidates[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf"
+    };
+    for (const char* fpath : font_candidates) {
+        if (std::ifstream(fpath).good()) {
+            io.Fonts->AddFontFromFileTTF(fpath, 15.0f);
+            break;
+        }
+    }
+
     // Google Earth Studio sleek dark styling
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
