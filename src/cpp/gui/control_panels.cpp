@@ -20,51 +20,51 @@ void GuiApp::render_header_bar() {
 
     if (ImGui::Begin("##HeaderBar", nullptr, flags)) {
         if (ImGui::BeginMenuBar()) {
-            // 1. Archivo Menu
-            if (ImGui::BeginMenu("Archivo")) {
-                if (ImGui::MenuItem("💾 Guardar Trayectoria (.json)...")) {
+            // 1. File Menu
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("💾 Save Trajectory (.json)...")) {
                     save_trajectory_to_json(current_trajectory_file_);
                 }
-                if (ImGui::MenuItem("📂 Cargar Trayectoria (.json)...")) {
+                if (ImGui::MenuItem("📂 Load Trajectory (.json)...")) {
                     load_trajectory_from_json(current_trajectory_file_);
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Salir")) {
+                if (ImGui::MenuItem("Exit")) {
                     request_close();
                 }
                 ImGui::EndMenu();
             }
 
-            // 2. Editar Menu
-            if (ImGui::BeginMenu("Editar")) {
-                if (ImGui::MenuItem("➕ Capturar Keyframe actual", "K")) {
+            // 2. Edit Menu
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("➕ Capture Current Keyframe", "K")) {
                     capture_keyframe_at_current_time();
                 }
-                if (ImGui::MenuItem("🗑 Eliminar Keyframe seleccionado")) {
+                if (ImGui::MenuItem("🗑 Delete Selected Keyframe")) {
                     if (selected_keyframe_idx_ >= 0) delete_keyframe(selected_keyframe_idx_);
                 }
                 ImGui::EndMenu();
             }
 
-            // 3. Ver Menu (Google Earth Studio Multi-Viewport Selector)
-            if (ImGui::BeginMenu("Ver")) {
-                if (ImGui::BeginMenu("Vista múltiple")) {
-                    if (ImGui::MenuItem("1 ventana gráfica", nullptr, active_layout_ == MultiViewLayout::VIEW_1_SINGLE)) {
+            // 3. View Menu (Google Earth Studio Multi-Viewport Selector)
+            if (ImGui::BeginMenu("View")) {
+                if (ImGui::BeginMenu("Multi-View Layout")) {
+                    if (ImGui::MenuItem("1 Viewport (Single)", nullptr, active_layout_ == MultiViewLayout::VIEW_1_SINGLE)) {
                         active_layout_ = MultiViewLayout::VIEW_1_SINGLE;
                     }
-                    if (ImGui::MenuItem("2 ventanas gráficas (Dual)", nullptr, active_layout_ == MultiViewLayout::VIEW_2_SPLIT)) {
+                    if (ImGui::MenuItem("2 Viewports (Dual Split)", nullptr, active_layout_ == MultiViewLayout::VIEW_2_SPLIT)) {
                         active_layout_ = MultiViewLayout::VIEW_2_SPLIT;
                     }
-                    if (ImGui::MenuItem("3 ventanas gráficas", nullptr, active_layout_ == MultiViewLayout::VIEW_3_SPLIT)) {
+                    if (ImGui::MenuItem("3 Viewports (Triple Split)", nullptr, active_layout_ == MultiViewLayout::VIEW_3_SPLIT)) {
                         active_layout_ = MultiViewLayout::VIEW_3_SPLIT;
                     }
-                    if (ImGui::MenuItem("4 ventanas gráficas (2x2 Grid)", nullptr, active_layout_ == MultiViewLayout::VIEW_4_GRID)) {
+                    if (ImGui::MenuItem("4 Viewports (2x2 Grid)", nullptr, active_layout_ == MultiViewLayout::VIEW_4_GRID)) {
                         active_layout_ = MultiViewLayout::VIEW_4_GRID;
                     }
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("↺ Resetear distribución por defecto")) {
+                if (ImGui::MenuItem("↺ Reset Default Layout")) {
                     split_ratio_x_ = 0.5f;
                     split_ratio_y_ = 0.5f;
                     timeline_height_px_ = 280.0f;
@@ -75,7 +75,7 @@ void GuiApp::render_header_bar() {
             ImGui::Separator();
 
             // Scenario & Sensor Quick Info
-            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "Escenario: %s", config_.scene_path.empty() ? "Checkerboard" : "Sponza");
+            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "Scene: %s", config_.scene_path.empty() ? "Checkerboard" : "Sponza");
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
@@ -122,13 +122,13 @@ void GuiApp::render_header_bar() {
 
             if (!is_recording_) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.25f, 0.25f, 1.0f));
-                if (ImGui::Button("● Renderizar H5", ImVec2(150, 22))) {
+                if (ImGui::Button("● Render H5", ImVec2(150, 22))) {
                     is_recording_ = true;
                 }
                 ImGui::PopStyleColor();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.75f, 0.35f, 1.0f));
-                if (ImGui::Button("■ Guardar Dataset", ImVec2(150, 22))) {
+                if (ImGui::Button("■ Save Dataset", ImVec2(150, 22))) {
                     is_recording_ = false;
                 }
                 ImGui::PopStyleColor();
@@ -183,16 +183,16 @@ void GuiApp::render_timeline_panel() {
 
     if (ImGui::Begin("##EarthStudioTimeline", nullptr, flags)) {
         // Toolbar inside timeline
-        if (ImGui::Button("➕ Capturar Keyframe", ImVec2(160, 24))) {
+        if (ImGui::Button("➕ Capture Keyframe", ImVec2(160, 24))) {
             capture_keyframe_at_current_time();
         }
         ImGui::SameLine();
-        if (ImGui::Button("🗑 Eliminar", ImVec2(80, 24))) {
+        if (ImGui::Button("🗑 Delete", ImVec2(80, 24))) {
             if (selected_keyframe_idx_ >= 0) delete_keyframe(selected_keyframe_idx_);
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(140);
-        const char* interp_names[] = {"Spline SE(3)", "Lineal + Slerp"};
+        const char* interp_names[] = {"SE(3) Spline", "Linear + Slerp"};
         int cur_interp = static_cast<int>(interp_mode_);
         if (ImGui::Combo("##Interp", &cur_interp, interp_names, 2)) {
             interp_mode_ = static_cast<TrajectoryInterpolation>(cur_interp);
@@ -206,11 +206,11 @@ void GuiApp::render_timeline_panel() {
             current_trajectory_file_ = file_buf;
         }
         ImGui::SameLine();
-        if (ImGui::Button("💾 Guardar", ImVec2(80, 24))) {
+        if (ImGui::Button("💾 Save", ImVec2(80, 24))) {
             save_trajectory_to_json(current_trajectory_file_);
         }
         ImGui::SameLine();
-        if (ImGui::Button("📂 Cargar", ImVec2(80, 24))) {
+        if (ImGui::Button("📂 Load", ImVec2(80, 24))) {
             load_trajectory_from_json(current_trajectory_file_);
         }
 
@@ -223,48 +223,48 @@ void GuiApp::render_timeline_panel() {
         // Left Track Controls Column
         ImGui::BeginChild("##TrackHierarchy", ImVec2(left_track_w, 0), true);
 
-        // Track 1: Posición
-        if (ImGui::TreeNodeEx("▾ Posición de la cámara", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Track 1: Position
+        if (ImGui::TreeNodeEx("▾ Camera Position", ImGuiTreeNodeFlags_DefaultOpen)) {
             float x = static_cast<float>(camera_pos_.x());
             float y = static_cast<float>(camera_pos_.y());
             float z = static_cast<float>(camera_pos_.z());
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Longitud (X)", &x, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.x() = x;
+            if (ImGui::DragFloat("Longitude (X)", &x, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.x() = x;
             ImGui::SameLine();
             if (ImGui::SmallButton("◆##kfx")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Latitud (Z)", &z, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.z() = z;
+            if (ImGui::DragFloat("Latitude (Z)", &z, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.z() = z;
             ImGui::SameLine();
             if (ImGui::SmallButton("◆##kfz")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Altitud (Y)", &y, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.y() = y;
+            if (ImGui::DragFloat("Altitude (Y)", &y, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.y() = y;
             ImGui::SameLine();
             if (ImGui::SmallButton("◆##kfy")) capture_keyframe_at_current_time();
 
             ImGui::TreePop();
         }
 
-        // Track 2: Rotación
-        if (ImGui::TreeNodeEx("▾ Rotación de la cámara", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Track 2: Rotation
+        if (ImGui::TreeNodeEx("▾ Camera Rotation", ImGuiTreeNodeFlags_DefaultOpen)) {
             float yaw = static_cast<float>(camera_yaw_deg_);
             float pitch = static_cast<float>(camera_pitch_deg_);
             float roll = static_cast<float>(camera_roll_deg_);
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Mover (Pan)", &yaw, 0.5f, -180.0f, 180.0f, "%.1f°")) camera_yaw_deg_ = yaw;
+            if (ImGui::DragFloat("Pan (Yaw)", &yaw, 0.5f, -180.0f, 180.0f, "%.1f°")) camera_yaw_deg_ = yaw;
             ImGui::SameLine();
             if (ImGui::SmallButton("◆##kfyaw")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Inclinar (Tilt)", &pitch, 0.5f, -89.0f, 89.0f, "%.1f°")) camera_pitch_deg_ = pitch;
+            if (ImGui::DragFloat("Tilt (Pitch)", &pitch, 0.5f, -89.0f, 89.0f, "%.1f°")) camera_pitch_deg_ = pitch;
             ImGui::SameLine();
             if (ImGui::SmallButton("◆##kfpitch")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Rodar (Roll)", &roll, 0.5f, -180.0f, 180.0f, "%.1f°")) camera_roll_deg_ = roll;
+            if (ImGui::DragFloat("Roll", &roll, 0.5f, -180.0f, 180.0f, "%.1f°")) camera_roll_deg_ = roll;
             ImGui::SameLine();
             if (ImGui::SmallButton("◆##kfroll")) capture_keyframe_at_current_time();
 

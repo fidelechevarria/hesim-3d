@@ -67,52 +67,52 @@ void GuiApp::render_multi_viewport_grid() {
     if (active_layout_ == MultiViewLayout::VIEW_1_SINGLE) {
         ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(total_w, upper_h), ImGuiCond_Always);
-        render_single_viewport(0, "Ventana Principal (Maximizada)", viewport_views_[1]);
+        render_single_viewport(0, "Main Viewport (Maximized)", viewport_views_[1]);
     } else if (active_layout_ == MultiViewLayout::VIEW_2_SPLIT) {
         // Left Column (Full height)
         ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(split_x - gap, upper_h), ImGuiCond_Always);
-        render_single_viewport(0, "Ventana Izquierda", viewport_views_[0]);
+        render_single_viewport(0, "Left Viewport", viewport_views_[0]);
 
         // Right Column (Full height)
         ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, upper_h), ImGuiCond_Always);
-        render_single_viewport(1, "Ventana Derecha", viewport_views_[1]);
+        render_single_viewport(1, "Right Viewport", viewport_views_[1]);
     } else if (active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
         // Left Column (Full height)
         ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(split_x - gap, upper_h), ImGuiCond_Always);
-        render_single_viewport(0, "Ventana Principal", viewport_views_[0]);
+        render_single_viewport(0, "Main Viewport", viewport_views_[0]);
 
         // Right Top
         ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, split_y - gap), ImGuiCond_Always);
-        render_single_viewport(1, "Ventana Superior Derecha", viewport_views_[1]);
+        render_single_viewport(1, "Top-Right Viewport", viewport_views_[1]);
 
         // Right Bottom
         ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y + split_y + gap), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, upper_h - split_y - gap), ImGuiCond_Always);
-        render_single_viewport(2, "Ventana Inferior Derecha", viewport_views_[2]);
+        render_single_viewport(2, "Bottom-Right Viewport", viewport_views_[2]);
     } else { // MultiViewLayout::VIEW_4_GRID (2x2 Grid)
         // Top-Left (Quad 0)
         ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(split_x - gap, split_y - gap), ImGuiCond_Always);
-        render_single_viewport(0, "Cuadrante 1", viewport_views_[0]);
+        render_single_viewport(0, "Quadrant 1", viewport_views_[0]);
 
         // Top-Right (Quad 1)
         ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, split_y - gap), ImGuiCond_Always);
-        render_single_viewport(1, "Cuadrante 2", viewport_views_[1]);
+        render_single_viewport(1, "Quadrant 2", viewport_views_[1]);
 
         // Bottom-Left (Quad 2)
         ImGui::SetNextWindowPos(ImVec2(0, upper_y + split_y + gap), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(split_x - gap, upper_h - split_y - gap), ImGuiCond_Always);
-        render_single_viewport(2, "Cuadrante 3", viewport_views_[2]);
+        render_single_viewport(2, "Quadrant 3", viewport_views_[2]);
 
         // Bottom-Right (Quad 3)
         ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y + split_y + gap), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, upper_h - split_y - gap), ImGuiCond_Always);
-        render_single_viewport(3, "Cuadrante 4", viewport_views_[3]);
+        render_single_viewport(3, "Quadrant 4", viewport_views_[3]);
     }
 
     // Draw clean visual splitter divider lines
@@ -134,31 +134,31 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
     if (ImGui::Begin(win_id.c_str(), nullptr, flags)) {
         // Top Toolbar inside each Viewport (Google Earth Studio Dropdown)
         const char* view_names[] = {
-            "Cámara (Sensor Live)",
-            "Eventos EVS (Accumulation)",
-            "Arriba (Top Ortho)",
-            "Sur (Front Ortho)",
-            "Este (Side Ortho)",
-            "Perspectiva 3D",
-            "Telemetría IMU"
+            "Camera (Live Sensor)",
+            "EVS Events (Accumulation)",
+            "Top (Top Ortho)",
+            "Front (Front Ortho)",
+            "Side (Side Ortho)",
+            "3D Perspective",
+            "IMU Telemetry"
         };
 
         int cur_view = static_cast<int>(viewport_views_[quad_idx]);
         ImGui::SetNextItemWidth(175);
-        std::string combo_id = "⚙ Vista##" + std::to_string(quad_idx);
+        std::string combo_id = "⚙ View##" + std::to_string(quad_idx);
         if (ImGui::Combo(combo_id.c_str(), &cur_view, view_names, 7)) {
             viewport_views_[quad_idx] = static_cast<ViewportContent>(cur_view);
         }
 
         ImGui::SameLine();
         if (viewport_views_[quad_idx] == ViewportContent::CAMERA_SENSOR) {
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Click Izq: Pan | Click Der: Dolly | Click Rueda: Órbita | Q/E: Roll]");
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Left Click: Pan | Right Click: Dolly | Middle Click: Orbit | Q/E: Roll]");
         } else if (viewport_views_[quad_idx] == ViewportContent::TOP_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Plano X-Z | Frustum Cámara + Trayectoria]");
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[X-Z Plane | Camera Frustum + Trajectory]");
         } else if (viewport_views_[quad_idx] == ViewportContent::SIDE_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Plano Z-Y | Perfil de Altitud]");
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Z-Y Plane | Altitude Profile]");
         } else if (viewport_views_[quad_idx] == ViewportContent::FRONT_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Plano X-Y]");
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[X-Y Plane]");
         }
 
         ImGui::Separator();
@@ -235,8 +235,8 @@ void GuiApp::render_imu_plots_content() {
     float avail_y = ImGui::GetContentRegionAvail().y;
     float plot_h = std::max(60.0f, (avail_y - 25.0f) * 0.5f);
 
-    if (ImPlot::BeginPlot("Giroscopio (rad/s)##imu", ImVec2(-1, plot_h))) {
-        ImPlot::SetupAxes("Tiempo [s]", "rad/s", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+    if (ImPlot::BeginPlot("Gyroscope (rad/s)##imu", ImVec2(-1, plot_h))) {
+        ImPlot::SetupAxes("Time [s]", "rad/s", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         if (!plot_time_.empty()) {
             ImPlot::PlotLine("Gyro X", plot_time_.data(), plot_gyro_x_.data(), (int)plot_time_.size());
             ImPlot::PlotLine("Gyro Y", plot_time_.data(), plot_gyro_y_.data(), (int)plot_time_.size());
@@ -245,8 +245,8 @@ void GuiApp::render_imu_plots_content() {
         ImPlot::EndPlot();
     }
 
-    if (ImPlot::BeginPlot("Acelerómetro (m/s^2)##imu", ImVec2(-1, plot_h))) {
-        ImPlot::SetupAxes("Tiempo [s]", "m/s^2", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+    if (ImPlot::BeginPlot("Accelerometer (m/s^2)##imu", ImVec2(-1, plot_h))) {
+        ImPlot::SetupAxes("Time [s]", "m/s^2", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         if (!plot_time_.empty()) {
             ImPlot::PlotLine("Acc X", plot_time_.data(), plot_acc_x_.data(), (int)plot_time_.size());
             ImPlot::PlotLine("Acc Y", plot_time_.data(), plot_acc_y_.data(), (int)plot_time_.size());
