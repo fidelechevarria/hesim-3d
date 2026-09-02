@@ -35,6 +35,7 @@ def create_parser() -> argparse.ArgumentParser:
     gui_p = subparsers.add_parser("gui", help="Launch interactive Dear ImGui real-time visualizer")
     gui_p.add_argument("--scene", type=str, default="checkerboard_room", help="3D Scene ID or path (.glb)")
     gui_p.add_argument("--sensor", type=str, default="alpsentek_eiger", help="Sensor preset name")
+    gui_p.add_argument("--trajectory", type=str, default="", help="Path to custom trajectory (.json) or preset")
     gui_p.add_argument("--duration", type=float, default=5.0, help="Loop duration in seconds")
     gui_p.add_argument("--fps", type=float, default=1000.0, help="Simulation sampling rate (Hz)")
     gui_p.add_argument("--threshold", type=float, default=0.20, help="Contrast sensitivity threshold")
@@ -88,6 +89,7 @@ def handle_gui(args: argparse.Namespace) -> int:
     return launch_interactive_gui(
         scene=args.scene,
         sensor_name=args.sensor,
+        trajectory=args.trajectory,
         duration_sec=args.duration,
         sim_fps=args.fps,
         event_threshold=args.threshold,

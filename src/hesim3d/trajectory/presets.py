@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, Any, Optional
+from pathlib import Path
 from .spline import Trajectory
 
 
@@ -10,8 +11,12 @@ def get_trajectory_preset(
     speed_factor: float = 1.0,
     **kwargs: Any,
 ) -> Trajectory:
-    """Generate predefined high-grade 6-DoF trajectory profiles."""
-    name_lower = name.strip().lower()
+    """Generate predefined high-grade 6-DoF trajectory profiles or load from JSON."""
+    name_str = name.strip()
+    if name_str.endswith(".json") or Path(name_str).is_file():
+        return Trajectory.from_json(name_str)
+
+    name_lower = name_str.lower()
 
     if name_lower in ("eight", "eight_loop", "figure8", "figure_eight"):
         center = kwargs.get("center", (0.0, 0.0, 1.5))

@@ -2,110 +2,214 @@
 #include <imgui.h>
 #include <implot.h>
 #include <iostream>
+#include <algorithm>
 
 namespace hesim3d {
 
-void GuiApp::render_viewports() {
-    ImGuiIO& io = ImGui::GetIO();
-    float margin = 12.0f;
-    float left_w = 380.0f;
-    float screen_w = io.DisplaySize.x > 100.0f ? io.DisplaySize.x : static_cast<float>(config_.window_width);
-    float screen_h = io.DisplaySize.y > 100.0f ? io.DisplaySize.y : static_cast<float>(config_.window_height);
+void GuiApp::render_multi_viewport_grid() {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    float total_w = vp->Size.x;
+    float total_h = vp->Size.y;
 
-    float right_x = left_w + 2.0f * margin;
-    float right_w = std::max(400.0f, screen_w - right_x - margin);
-    float half_w = (right_w - margin) * 0.5f;
+    float header_h = 42.0f;
+    float upper_h = total_h - header_h - timeline_height_px_ - 6.0f;
+    float upper_y = header_h;
 
-    float total_h = screen_h - 2.0f * margin;
-    float top_h = total_h * 0.53f;
-    float bot_h = total_h - top_h - margin;
-    float bot_y = margin + top_h + margin;
+    float split_x = total_w * split_ratio_x_;
+    float split_y = upper_h * split_ratio_y_;
 
-    ImGuiCond cond = (layout_init_frames_ > 0) ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
-
-    auto render_aspect_image = [](uint32_t tex_id, uint32_t tex_w, uint32_t tex_h) {
-        ImVec2 avail_size = ImGui::GetContentRegionAvail();
-        if (tex_id != 0 && avail_size.x > 10 && avail_size.y > 10) {
-            float tex_aspect = static_cast<float>(tex_w) / static_cast<float>(tex_h);
-            float avail_aspect = avail_size.x / avail_size.y;
-            ImVec2 draw_size = avail_size;
-            if (avail_aspect > tex_aspect) {
-                draw_size.x = avail_size.y * tex_aspect;
-            } else {
-                draw_size.y = avail_size.x / tex_aspect;
-            }
-            float offset_x = (avail_size.x - draw_size.x) * 0.5f;
-            float offset_y = (avail_size.y - draw_size.y) * 0.5f;
-            if (offset_x > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
-            if (offset_y > 0.0f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offset_y);
-            ImGui::Image((ImTextureID)(intptr_t)tex_id, draw_size);
+    // Resizable Splitters
+    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_2_SPLIT || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+        // Vertical Splitter Bar between columns
+        ImGui::SetNextWindowPos(ImVec2(split_x - 3.0f, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(6.0f, upper_h));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.18f, 0.20f, 0.25f, 0.7f));
+        ImGui::Begin("##ColSplitter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
+        if (ImGui::IsWindowHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        if (ImGui::IsWindowFocused() || (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
+            split_ratio_x_ = std::clamp(ImGui::GetIO().MousePos.x / total_w, 0.15f, 0.85f);
         }
-    };
-
-    // ------------------------------------------------------------------------
-    // Viewport 1: APS Sensor View (Top-Left)
-    // ------------------------------------------------------------------------
-    ImGui::SetNextWindowPos(ImVec2(right_x, margin), cond);
-    ImGui::SetNextWindowSize(ImVec2(half_w, top_h), cond);
-    ImGui::Begin("APS Sensor View (Live RAW / sRGB)", nullptr, ImGuiWindowFlags_NoCollapse);
-    if (sensor_texture_id_ != 0) {
-        render_aspect_image(sensor_texture_id_, sensor_tex_w_, sensor_tex_h_);
-    } else {
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "APS Camera Sensor Active");
-        ImGui::Text("Simulated FPS: %.1f Hz", config_.sim_fps);
-        ImGui::Text("Exposure: %.2f ms", config_.exposure_ms);
+        ImGui::End();
+        ImGui::PopStyleColor();
     }
-    ImGui::End();
 
-    // ------------------------------------------------------------------------
-    // Viewport 2: EVS Neuromorphic Event Viewport (Top-Right)
-    // ------------------------------------------------------------------------
-    ImGui::SetNextWindowPos(ImVec2(right_x + half_w + margin, margin), cond);
-    ImGui::SetNextWindowSize(ImVec2(half_w, top_h), cond);
-    ImGui::Begin("EVS Neuromorphic Events (Accumulation Map)", nullptr, ImGuiWindowFlags_NoCollapse);
-    if (evs_texture_id_ != 0) {
-        render_aspect_image(evs_texture_id_, sensor_tex_w_, sensor_tex_h_);
-    } else {
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "EVS Stream: Red = ON (+1), Blue = OFF (-1)");
-        ImGui::Text("Contrast Threshold theta: %.3f", config_.event_threshold);
-        ImGui::Text("Accumulation Window: %.1f ms", config_.accumulation_window_ms);
+    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+        // Horizontal Splitter Bar between rows
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y + split_y - 3.0f));
+        ImGui::SetNextWindowSize(ImVec2(total_w, 6.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.18f, 0.20f, 0.25f, 0.7f));
+        ImGui::Begin("##RowSplitter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
+        if (ImGui::IsWindowHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (ImGui::IsWindowFocused() || (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
+            split_ratio_y_ = std::clamp((ImGui::GetIO().MousePos.y - upper_y) / upper_h, 0.15f, 0.85f);
+        }
+        ImGui::End();
+        ImGui::PopStyleColor();
     }
-    ImGui::End();
 
-    // ------------------------------------------------------------------------
-    // Viewport 3: 3D Orbit View (Bottom-Left)
-    // ------------------------------------------------------------------------
-    ImGui::SetNextWindowPos(ImVec2(right_x, bot_y), cond);
-    ImGui::SetNextWindowSize(ImVec2(half_w, bot_h), cond);
-    ImGui::Begin("3D Trajectory & World View", nullptr, ImGuiWindowFlags_NoCollapse);
-    if (orbit_texture_id_ != 0) {
-        render_aspect_image(orbit_texture_id_, sensor_tex_w_, sensor_tex_h_);
-    } else {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "World View: Active Camera & 3D Spline Path");
-        ImGui::Text("Current Timestamp: %.3f s / %.3f s", current_time_sec_, spline_.max_time());
-    }
-    ImGui::End();
+    // Render Quadrants according to active_layout_
+    if (active_layout_ == MultiViewLayout::VIEW_1_SINGLE) {
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(total_w, upper_h));
+        render_single_viewport(0, "Ventana Principal (Maximizada)", viewport_views_[1]); // Default camera
+    } else if (active_layout_ == MultiViewLayout::VIEW_2_SPLIT) {
+        // Left Column (Full height)
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(split_x, upper_h));
+        render_single_viewport(0, "Ventana Izquierda", viewport_views_[0]);
 
-    // ------------------------------------------------------------------------
-    // Viewport 4: IMU & Telemetry Waveforms (Bottom-Right)
-    // ------------------------------------------------------------------------
-    ImGui::SetNextWindowPos(ImVec2(right_x + half_w + margin, bot_y), cond);
-    ImGui::SetNextWindowSize(ImVec2(half_w, bot_h), cond);
-    render_imu_plots();
+        // Right Column (Full height)
+        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, upper_h));
+        render_single_viewport(1, "Ventana Derecha", viewport_views_[1]);
+    } else if (active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+        // Left Column (Full height)
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(split_x, upper_h));
+        render_single_viewport(0, "Ventana Principal", viewport_views_[0]);
 
-    if (layout_init_frames_ > 0) {
-        layout_init_frames_--;
+        // Right Top
+        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, split_y));
+        render_single_viewport(1, "Ventana Superior Derecha", viewport_views_[1]);
+
+        // Right Bottom
+        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y + split_y));
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, upper_h - split_y));
+        render_single_viewport(2, "Ventana Inferior Derecha", viewport_views_[2]);
+    } else { // MultiViewLayout::VIEW_4_GRID (2x2 Grid)
+        // Top-Left (Quad 0)
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(split_x, split_y));
+        render_single_viewport(0, "Cuadrante 1", viewport_views_[0]);
+
+        // Top-Right (Quad 1)
+        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y));
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, split_y));
+        render_single_viewport(1, "Cuadrante 2", viewport_views_[1]);
+
+        // Bottom-Left (Quad 2)
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y + split_y));
+        ImGui::SetNextWindowSize(ImVec2(split_x, upper_h - split_y));
+        render_single_viewport(2, "Cuadrante 3", viewport_views_[2]);
+
+        // Bottom-Right (Quad 3)
+        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y + split_y));
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, upper_h - split_y));
+        render_single_viewport(3, "Cuadrante 4", viewport_views_[3]);
     }
 }
 
-void GuiApp::render_imu_plots() {
-    ImGui::Begin("IMU Telemetry & Kinematics", nullptr, ImGuiWindowFlags_NoCollapse);
+void GuiApp::render_single_viewport(int quad_idx, const std::string& name, ViewportContent content) {
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+    std::string win_id = "##ViewportWindow_" + std::to_string(quad_idx);
 
+    if (ImGui::Begin(win_id.c_str(), nullptr, flags)) {
+        // Top Toolbar inside each Viewport (Google Earth Studio Dropdown)
+        const char* view_names[] = {
+            "Cámara (Sensor Live)",
+            "Eventos EVS (Accumulation)",
+            "Arriba (Top Ortho)",
+            "Sur (Front Ortho)",
+            "Este (Side Ortho)",
+            "Perspectiva 3D",
+            "Telemetría IMU"
+        };
+
+        int cur_view = static_cast<int>(viewport_views_[quad_idx]);
+        ImGui::SetNextItemWidth(175);
+        std::string combo_id = "⚙ Vista##" + std::to_string(quad_idx);
+        if (ImGui::Combo(combo_id.c_str(), &cur_view, view_names, 7)) {
+            viewport_views_[quad_idx] = static_cast<ViewportContent>(cur_view);
+        }
+
+        ImGui::SameLine();
+        if (viewport_views_[quad_idx] == ViewportContent::CAMERA_SENSOR) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Click Izq: Pan | Click Der: Dolly | Click Rueda: Órbita | Q/E: Roll]");
+        } else if (viewport_views_[quad_idx] == ViewportContent::TOP_ORTHO) {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Plano X-Z | Frustum Cámara + Trayectoria]");
+        } else if (viewport_views_[quad_idx] == ViewportContent::SIDE_ORTHO) {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Plano Z-Y | Perfil de Altitud]");
+        } else if (viewport_views_[quad_idx] == ViewportContent::FRONT_ORTHO) {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Plano X-Y]");
+        }
+
+        ImGui::Separator();
+
+        ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+        ImVec2 avail_sz = ImGui::GetContentRegionAvail();
+        ImVec2 canvas_p1 = ImVec2(canvas_p0.x + avail_sz.x, canvas_p0.y + avail_sz.y);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+        auto render_aspect_image = [&](uint32_t tex_id, uint32_t tex_w, uint32_t tex_h) {
+            if (tex_id != 0 && avail_sz.x > 10 && avail_sz.y > 10) {
+                float tex_aspect = static_cast<float>(tex_w) / static_cast<float>(tex_h);
+                float avail_aspect = avail_sz.x / avail_sz.y;
+                ImVec2 draw_size = avail_sz;
+                if (avail_aspect > tex_aspect) {
+                    draw_size.x = avail_sz.y * tex_aspect;
+                } else {
+                    draw_size.y = avail_sz.x / tex_aspect;
+                }
+                float offset_x = (avail_sz.x - draw_size.x) * 0.5f;
+                float offset_y = (avail_sz.y - draw_size.y) * 0.5f;
+                if (offset_x > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
+                if (offset_y > 0.0f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offset_y);
+                ImVec2 img_p0 = ImGui::GetCursorScreenPos();
+                ImGui::Image((ImTextureID)(intptr_t)tex_id, draw_size);
+
+                // Draw central target reticle
+                float cx = img_p0.x + draw_size.x * 0.5f;
+                float cy = img_p0.y + draw_size.y * 0.5f;
+                draw_list->AddCircle(ImVec2(cx, cy), 14.0f, IM_COL32(0, 220, 255, 180), 16, 1.5f);
+                draw_list->AddLine(ImVec2(cx - 20, cy), ImVec2(cx - 5, cy), IM_COL32(0, 220, 255, 180), 1.5f);
+                draw_list->AddLine(ImVec2(cx + 5, cy), ImVec2(cx + 20, cy), IM_COL32(0, 220, 255, 180), 1.5f);
+                draw_list->AddLine(ImVec2(cx, cy - 20), ImVec2(cx, cy - 5), IM_COL32(0, 220, 255, 180), 1.5f);
+                draw_list->AddLine(ImVec2(cx, cy + 5), ImVec2(cx, cy + 20), IM_COL32(0, 220, 255, 180), 1.5f);
+            }
+        };
+
+        // Render viewport contents
+        switch (viewport_views_[quad_idx]) {
+            case ViewportContent::CAMERA_SENSOR:
+                render_aspect_image(sensor_texture_id_, sensor_tex_w_, sensor_tex_h_);
+                handle_camera_mouse_input(canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
+                break;
+
+            case ViewportContent::EVS_ACCUMULATION:
+                render_aspect_image(evs_texture_id_, sensor_tex_w_, sensor_tex_h_);
+                break;
+
+            case ViewportContent::TOP_ORTHO:
+                draw_ortho_map(0, draw_list, canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
+                break;
+
+            case ViewportContent::FRONT_ORTHO:
+                draw_ortho_map(1, draw_list, canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
+                break;
+
+            case ViewportContent::SIDE_ORTHO:
+                draw_ortho_map(2, draw_list, canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
+                break;
+
+            case ViewportContent::WORLD_3D_ORBIT:
+                draw_ortho_map(0, draw_list, canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
+                break;
+
+            case ViewportContent::IMU_TELEMETRY:
+                render_imu_plots_content();
+                break;
+        }
+    }
+    ImGui::End();
+}
+
+void GuiApp::render_imu_plots_content() {
     float avail_y = ImGui::GetContentRegionAvail().y;
-    float plot_h = std::max(80.0f, (avail_y - 30.0f) * 0.5f);
+    float plot_h = std::max(60.0f, (avail_y - 25.0f) * 0.5f);
 
-    if (ImPlot::BeginPlot("Angular Velocity (Gyro) [rad/s]", ImVec2(-1, plot_h))) {
-        ImPlot::SetupAxes("Time [s]", "rad/s", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+    if (ImPlot::BeginPlot("Giroscopio (rad/s)##imu", ImVec2(-1, plot_h))) {
+        ImPlot::SetupAxes("Tiempo [s]", "rad/s", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         if (!plot_time_.empty()) {
             ImPlot::PlotLine("Gyro X", plot_time_.data(), plot_gyro_x_.data(), (int)plot_time_.size());
             ImPlot::PlotLine("Gyro Y", plot_time_.data(), plot_gyro_y_.data(), (int)plot_time_.size());
@@ -114,8 +218,8 @@ void GuiApp::render_imu_plots() {
         ImPlot::EndPlot();
     }
 
-    if (ImPlot::BeginPlot("Linear Acceleration (Acc) [m/s^2]", ImVec2(-1, plot_h))) {
-        ImPlot::SetupAxes("Time [s]", "m/s^2", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+    if (ImPlot::BeginPlot("Acelerómetro (m/s^2)##imu", ImVec2(-1, plot_h))) {
+        ImPlot::SetupAxes("Tiempo [s]", "m/s^2", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         if (!plot_time_.empty()) {
             ImPlot::PlotLine("Acc X", plot_time_.data(), plot_acc_x_.data(), (int)plot_time_.size());
             ImPlot::PlotLine("Acc Y", plot_time_.data(), plot_acc_y_.data(), (int)plot_time_.size());
@@ -123,8 +227,6 @@ void GuiApp::render_imu_plots() {
         }
         ImPlot::EndPlot();
     }
-
-    ImGui::End();
 }
 
 } // namespace hesim3d

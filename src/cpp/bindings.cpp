@@ -121,6 +121,7 @@ NB_MODULE(_hesim3d_core, m) {
         .def(nb::init<>())
         .def_rw("scene_path", &hesim3d::GuiConfig::scene_path)
         .def_rw("sensor_name", &hesim3d::GuiConfig::sensor_name)
+        .def_rw("trajectory_path", &hesim3d::GuiConfig::trajectory_path)
         .def_rw("window_width", &hesim3d::GuiConfig::window_width)
         .def_rw("window_height", &hesim3d::GuiConfig::window_height)
         .def_rw("duration_sec", &hesim3d::GuiConfig::duration_sec)

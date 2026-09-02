@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List, Tuple, Optional, Union
+from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 from hesim3d._hesim3d_core import SE3Spline as _CppSE3Spline, TrajectorySample
@@ -100,6 +101,86 @@ class Trajectory:
         cpp_spline = _CppSE3Spline(dt_ctrl)
         cpp_spline.build_from_waypoints(positions, orientations, duration_sec)
         return cls(cpp_spline)
+
+    @classmethod
+    def from_keyframes(
+        cls,
+        keyframes: List[dict],
+        total_duration_sec: Optional[float] = None,
+        dt_ctrl: float = 0.05,
+    ) -> Trajectory:
+        """Create a trajectory from a list of keyframe dicts containing time_sec, position, and orientation_xyzw."""
+        if len(keyframes) < 2:
+            raise ValueError("At least 2 keyframes are required to build a trajectory.")
+        
+        # Sort by timestamp
+        sorted_kfs = sorted(keyframes, key=lambda k: k.get("time_sec", k.get("timestamp_sec", 0.0)))
+        timestamps = [k.get("time_sec", k.get("timestamp_sec", 0.0)) for k in sorted_kfs]
+        positions = [k["position"] for k in sorted_kfs]
+        
+        orientations = []
+        for k in sorted_kfs:
+            if "orientation_xyzw" in k:
+                orientations.append(k["orientation_xyzw"])
+            elif "rotation_euler_deg" in k:
+                r = Rotation.from_euler("zyx", k["rotation_euler_deg"], degrees=True)
+                orientations.append(r.as_quat().tolist())
+            else:
+                orientations.append([0.0, 0.0, 0.0, 1.0])
+                
+        duration = total_duration_sec if total_duration_sec is not None else float(timestamps[-1] - timestamps[0])
+        if duration <= 0.0:
+            duration = 1.0
+            
+        return cls.from_control_poses(timestamps, positions, orientations, dt_ctrl=dt_ctrl)
+
+    @classmethod
+    def from_json(cls, json_path: Union[str, Path]) -> Trajectory:
+        """Load a trajectory from a Google Earth Studio style JSON file."""
+        import json
+        path = Path(json_path)
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        keyframes = data.get("keyframes") or data.get("keyframes_6dof", [])
+        duration = data.get("duration_sec", None)
+        return cls.from_keyframes(keyframes, total_duration_sec=duration)
+
+    def to_json(self, json_path: Union[str, Path], num_keyframe_samples: int = 10) -> None:
+        """Export the trajectory to a Google Earth Studio style JSON file."""
+        import json
+        t_min = self.min_time
+        t_max = self.max_time
+        duration = t_max - t_min
+        
+        times = np.linspace(t_min, t_max, num_keyframe_samples)
+        keyframes = []
+        for t in times:
+            sample = self.evaluate(t)
+            q = sample.orientation_xyzw
+            # Convert orientation to euler angles (yaw, pitch, roll in degrees)
+            r = Rotation.from_quat([q[0], q[1], q[2], q[3]])
+            euler = r.as_euler("zyx", degrees=True).tolist() # [yaw/pan, pitch/tilt, roll]
+            
+            keyframes.append({
+                "time_sec": float(t),
+                "position": [float(sample.position[0]), float(sample.position[1]), float(sample.position[2])],
+                "rotation_euler_deg": [float(euler[0]), float(euler[1]), float(euler[2])],
+                "orientation_xyzw": [float(q[0]), float(q[1]), float(q[2]), float(q[3])],
+            })
+            
+        data = {
+            "version": "1.0",
+            "format": "hesim3d_earth_studio_trajectory",
+            "duration_sec": float(duration),
+            "interpolation": "spline_se3",
+            "keyframes": keyframes,
+        }
+        
+        path = Path(json_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
 
     @property
     def min_time(self) -> float:

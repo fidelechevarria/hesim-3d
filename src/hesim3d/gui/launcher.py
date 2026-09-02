@@ -14,6 +14,7 @@ from hesim3d.sensor.config import SensorConfig
 def launch_interactive_gui(
     scene: str = "checkerboard_room",
     sensor_name: str = "alpsentek_eiger",
+    trajectory: str = "",
     duration_sec: float = 5.0,
     sim_fps: float = 1000.0,
     event_threshold: float = 0.20,
@@ -30,6 +31,7 @@ def launch_interactive_gui(
     cfg = _CppGuiConfig()
     cfg.scene_path = str(scene_path)
     cfg.sensor_name = str(sensor_name)
+    cfg.trajectory_path = str(trajectory) if trajectory else ""
     cfg.duration_sec = float(duration_sec)
     cfg.sim_fps = float(sim_fps)
     cfg.event_threshold = float(event_threshold)
