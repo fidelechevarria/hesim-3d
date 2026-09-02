@@ -154,11 +154,26 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
         if (viewport_views_[quad_idx] == ViewportContent::CAMERA_SENSOR) {
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Left Click: Pan | Right Click: Dolly | Middle Click: Orbit | Q/E: Roll]");
         } else if (viewport_views_[quad_idx] == ViewportContent::TOP_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[X-Z Plane | Camera Frustum + Trajectory]");
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Top Ortho | X-Z]");
+            ImGui::SameLine();
+            std::string btn_id = "Reset (F)##top" + std::to_string(quad_idx);
+            if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(0);
+            ImGui::SameLine();
+            ImGui::TextDisabled("| Right/Mid Drag: Pan | Wheel: Zoom | Drag KF: Edit");
         } else if (viewport_views_[quad_idx] == ViewportContent::SIDE_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Z-Y Plane | Altitude Profile]");
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Side Ortho | Z-Y]");
+            ImGui::SameLine();
+            std::string btn_id = "Reset (F)##side" + std::to_string(quad_idx);
+            if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(2);
+            ImGui::SameLine();
+            ImGui::TextDisabled("| Right/Mid Drag: Pan | Wheel: Zoom | Drag KF: Edit");
         } else if (viewport_views_[quad_idx] == ViewportContent::FRONT_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[X-Y Plane]");
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Front Ortho | X-Y]");
+            ImGui::SameLine();
+            std::string btn_id = "Reset (F)##front" + std::to_string(quad_idx);
+            if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(1);
+            ImGui::SameLine();
+            ImGui::TextDisabled("| Right/Mid Drag: Pan | Wheel: Zoom | Drag KF: Edit");
         }
 
         ImGui::Separator();

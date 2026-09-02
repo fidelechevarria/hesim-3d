@@ -61,6 +61,15 @@ public:
 
     // Offscreen Rendering
     bool render_frame(uint8_t* out_rgb_buffer, size_t buffer_size, uint64_t timestamp_us = 0);
+
+    // Orthographic Offscreen Rendering (Top = 0, Front = 1, Side = 2)
+    bool render_ortho_frame(int ortho_idx,
+                            const Eigen::Vector2d& pan,
+                            double scale,
+                            float canvas_w,
+                            float canvas_h,
+                            uint8_t* out_rgb_buffer,
+                            size_t buffer_size);
     
     // Batch Rendering to RingBuffer
     size_t render_batch(const std::vector<Eigen::Vector3d>& positions,
@@ -86,6 +95,9 @@ private:
     filament::View* view_{nullptr};
     filament::Camera* camera_{nullptr};
     filament::SwapChain* swap_chain_{nullptr};
+
+    utils::Entity ortho_camera_entity_;
+    filament::Camera* ortho_camera_{nullptr};
 
     filament::IndirectLight* indirect_light_{nullptr};
     filament::Skybox* skybox_{nullptr};

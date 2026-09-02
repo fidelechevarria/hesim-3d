@@ -125,9 +125,16 @@ private:
     float split_ratio_y_{0.5f};
     float timeline_height_px_{280.0f};
 
-    // Orthographic View Transforms
+    // Orthographic View Transforms & Interaction
     Eigen::Vector2d ortho_pan_[3]{ {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0} }; // Top, Front, Side
     double ortho_scale_[3]{ 0.25, 0.25, 0.25 }; // Scale factor for Sponza centimeter coords
+    uint32_t ortho_texture_id_[3]{0, 0, 0};
+    std::vector<uint8_t> ortho_img_buffers_[3];
+    bool ortho_dirty_[3]{true, true, true};
+    int dragging_keyframe_idx_{-1};
+    float ortho_dimming_{0.15f}; // Background brightness/dimming adjustment
+    float last_canvas_w_[3]{0.0f, 0.0f, 0.0f};
+    float last_canvas_h_[3]{0.0f, 0.0f, 0.0f};
 
     // Textures for viewports (OpenGL texture IDs)
     uint32_t sensor_texture_id_{0};
@@ -156,8 +163,11 @@ private:
     void render_single_viewport(int quad_idx, const std::string& name, ViewportContent content);
     void render_imu_plots_content();
 
-    // 2D Orthographic Draw Helpers
+    // 2D Orthographic Draw & Mouse Input Helpers
     void draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, float min_y, float max_x, float max_y);
+    void handle_ortho_mouse_input(int ortho_idx, float min_x, float min_y, float max_x, float max_y);
+    void update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h);
+    void frame_ortho_view(int ortho_idx);
     void handle_camera_mouse_input(float min_x, float min_y, float max_x, float max_y);
 
     void update_simulation_step(double dt);

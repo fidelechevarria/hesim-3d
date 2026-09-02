@@ -49,9 +49,15 @@ GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
     evs_img_buffer_.resize(sensor_tex_w_ * sensor_tex_h_ * 3, 20);
     prev_lum_buffer_.resize(sensor_tex_w_ * sensor_tex_h_, 40.0f);
 
+    for (int i = 0; i < 3; ++i) {
+        ortho_img_buffers_[i].resize(sensor_tex_w_ * sensor_tex_h_ * 3, 25);
+        ortho_dirty_[i] = true;
+    }
+
     // Initial default keyframes
     bool is_sponza = (config_.scene_path.find("sponza") != std::string::npos);
     if (is_sponza) {
+        ortho_scale_[0] = ortho_scale_[1] = ortho_scale_[2] = 0.25;
         camera_pos_ = Eigen::Vector3d(0.0, 180.0, -450.0);
         camera_yaw_deg_ = 0.0;
         camera_pitch_deg_ = 0.0;
@@ -358,8 +364,210 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
     if (ImGui::IsKeyDown(ImGuiKey_E)) camera_roll_deg_ += 0.8;
 }
 
+void GuiApp::update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h) {
+    if (ortho_idx < 0 || ortho_idx > 2 || !renderer_) return;
+
+    if (ortho_img_buffers_[ortho_idx].size() != sensor_tex_w_ * sensor_tex_h_ * 3) {
+        ortho_img_buffers_[ortho_idx].resize(sensor_tex_w_ * sensor_tex_h_ * 3, 25);
+    }
+
+    bool success = renderer_->render_ortho_frame(
+        ortho_idx,
+        ortho_pan_[ortho_idx],
+        ortho_scale_[ortho_idx],
+        canvas_w,
+        canvas_h,
+        ortho_img_buffers_[ortho_idx].data(),
+        ortho_img_buffers_[ortho_idx].size()
+    );
+
+    if (success && ortho_texture_id_[ortho_idx] != 0) {
+        glBindTexture(GL_TEXTURE_2D, ortho_texture_id_[ortho_idx]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sensor_tex_w_, sensor_tex_h_, GL_RGB, GL_UNSIGNED_BYTE, ortho_img_buffers_[ortho_idx].data());
+    }
+
+    ortho_dirty_[ortho_idx] = false;
+}
+
+void GuiApp::frame_ortho_view(int ortho_idx) {
+    if (ortho_idx < 0 || ortho_idx > 2) return;
+
+    Eigen::Vector3d center(0.0, 180.0, 0.0);
+    if (!keyframes_.empty()) {
+        center.setZero();
+        for (const auto& kf : keyframes_) {
+            center += kf.position;
+        }
+        center /= static_cast<double>(keyframes_.size());
+    }
+
+    bool is_sponza = (config_.scene_path.find("sponza") != std::string::npos);
+    double default_scale = is_sponza ? 0.25 : 20.0;
+
+    if (ortho_idx == 0) {
+        ortho_pan_[0] = Eigen::Vector2d(center.x(), center.z());
+        ortho_scale_[0] = default_scale;
+    } else if (ortho_idx == 1) {
+        ortho_pan_[1] = Eigen::Vector2d(center.x(), center.y());
+        ortho_scale_[1] = default_scale;
+    } else {
+        ortho_pan_[2] = Eigen::Vector2d(center.z(), center.y());
+        ortho_scale_[2] = default_scale;
+    }
+    ortho_dirty_[ortho_idx] = true;
+}
+
+void GuiApp::handle_ortho_mouse_input(int ortho_idx, float min_x, float min_y, float max_x, float max_y) {
+    if (ortho_idx < 0 || ortho_idx > 2) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 mouse_pos = io.MousePos;
+    bool is_hovered = (mouse_pos.x >= min_x && mouse_pos.x <= max_x &&
+                       mouse_pos.y >= min_y && mouse_pos.y <= max_y);
+
+    float center_x = (min_x + max_x) * 0.5f;
+    float center_y = (min_y + max_y) * 0.5f;
+    double scale = ortho_scale_[ortho_idx];
+    Eigen::Vector2d pan = ortho_pan_[ortho_idx];
+
+    auto screen_to_world = [&](const ImVec2& sp) -> Eigen::Vector2d {
+        if (ortho_idx == 0) {
+            double wx = pan.x() + (sp.x - center_x) / scale;
+            double wz = pan.y() + (sp.y - center_y) / scale;
+            return Eigen::Vector2d(wx, wz);
+        } else if (ortho_idx == 1) {
+            double wx = pan.x() + (sp.x - center_x) / scale;
+            double wy = pan.y() - (sp.y - center_y) / scale;
+            return Eigen::Vector2d(wx, wy);
+        } else {
+            double wz = pan.x() + (sp.x - center_x) / scale;
+            double wy = pan.y() - (sp.y - center_y) / scale;
+            return Eigen::Vector2d(wz, wy);
+        }
+    };
+
+    // 1. Reset / Frame View on 'F' key
+    if (is_hovered && ImGui::IsKeyPressed(ImGuiKey_F)) {
+        frame_ortho_view(ortho_idx);
+        return;
+    }
+
+    // 2. Mouse Wheel: Smooth Zoom centered on Mouse Cursor
+    if (is_hovered && io.MouseWheel != 0.0f) {
+        Eigen::Vector2d mouse_world_before = screen_to_world(mouse_pos);
+        double factor = (io.MouseWheel > 0.0f) ? 1.15 : (1.0 / 1.15);
+        double new_scale = std::clamp(scale * factor, 0.005, 500.0);
+
+        if (ortho_idx == 0) {
+            ortho_pan_[ortho_idx].x() = mouse_world_before.x() - (mouse_pos.x - center_x) / new_scale;
+            ortho_pan_[ortho_idx].y() = mouse_world_before.y() - (mouse_pos.y - center_y) / new_scale;
+        } else {
+            ortho_pan_[ortho_idx].x() = mouse_world_before.x() - (mouse_pos.x - center_x) / new_scale;
+            ortho_pan_[ortho_idx].y() = mouse_world_before.y() + (mouse_pos.y - center_y) / new_scale;
+        }
+
+        ortho_scale_[ortho_idx] = new_scale;
+        ortho_dirty_[ortho_idx] = true;
+    }
+
+    // 3. Middle-Click or Right-Click Drag: 2D Panning (Locked orthogonal axis, NO orbit!)
+    if (is_hovered && (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle))) {
+        if (ortho_idx == 0) {
+            ortho_pan_[ortho_idx].x() -= io.MouseDelta.x / scale;
+            ortho_pan_[ortho_idx].y() -= io.MouseDelta.y / scale;
+        } else {
+            ortho_pan_[ortho_idx].x() -= io.MouseDelta.x / scale;
+            ortho_pan_[ortho_idx].y() += io.MouseDelta.y / scale;
+        }
+        ortho_dirty_[ortho_idx] = true;
+    }
+
+    // 4. Interactive Keyframe Dragging with Left-Click
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && is_hovered) {
+        dragging_keyframe_idx_ = -1;
+        for (size_t i = 0; i < keyframes_.size(); ++i) {
+            ImVec2 kp;
+            if (ortho_idx == 0) {
+                kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.x() - pan.x()) * scale),
+                            center_y + static_cast<float>((keyframes_[i].position.z() - pan.y()) * scale));
+            } else if (ortho_idx == 1) {
+                kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.x() - pan.x()) * scale),
+                            center_y - static_cast<float>((keyframes_[i].position.y() - pan.y()) * scale));
+            } else {
+                kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.z() - pan.x()) * scale),
+                            center_y - static_cast<float>((keyframes_[i].position.y() - pan.y()) * scale));
+            }
+
+            float d2 = (mouse_pos.x - kp.x) * (mouse_pos.x - kp.x) + (mouse_pos.y - kp.y) * (mouse_pos.y - kp.y);
+            if (d2 <= 144.0f) { // 12 px radius
+                dragging_keyframe_idx_ = static_cast<int>(i);
+                selected_keyframe_idx_ = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        dragging_keyframe_idx_ = -1;
+    }
+
+    if (dragging_keyframe_idx_ >= 0 && static_cast<size_t>(dragging_keyframe_idx_) < keyframes_.size()) {
+        auto& kf = keyframes_[dragging_keyframe_idx_];
+        if (ortho_idx == 0) {
+            kf.position.x() += io.MouseDelta.x / scale;
+            kf.position.z() += io.MouseDelta.y / scale;
+        } else if (ortho_idx == 1) {
+            kf.position.x() += io.MouseDelta.x / scale;
+            kf.position.y() -= io.MouseDelta.y / scale;
+        } else {
+            kf.position.z() += io.MouseDelta.x / scale;
+            kf.position.y() -= io.MouseDelta.y / scale;
+        }
+        rebuild_trajectory();
+    }
+}
+
 void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, float min_y, float max_x, float max_y) {
     if (!draw_list) return;
+
+    // Handle mouse navigation (pan, zoom, keyframe drag, reset view)
+    handle_ortho_mouse_input(ortho_idx, min_x, min_y, max_x, max_y);
+
+    float canvas_w = max_x - min_x;
+    float canvas_h = max_y - min_y;
+    if (canvas_w < 10.0f || canvas_h < 10.0f) return;
+
+    // Detect viewport size changes
+    if (std::abs(canvas_w - last_canvas_w_[ortho_idx]) > 4.0f ||
+        std::abs(canvas_h - last_canvas_h_[ortho_idx]) > 4.0f) {
+        ortho_dirty_[ortho_idx] = true;
+        last_canvas_w_[ortho_idx] = canvas_w;
+        last_canvas_h_[ortho_idx] = canvas_h;
+    }
+
+    // Re-render orthographic 3D view if dirty
+    if (ortho_dirty_[ortho_idx] && renderer_) {
+        update_ortho_texture(ortho_idx, canvas_w, canvas_h);
+    }
+
+    // 1. Draw 3D Model Rendered Background
+    if (ortho_texture_id_[ortho_idx] != 0 && renderer_) {
+        draw_list->AddImage(
+            (ImTextureID)(intptr_t)ortho_texture_id_[ortho_idx],
+            ImVec2(min_x, min_y),
+            ImVec2(max_x, max_y)
+        );
+
+        // Subtle dark translucent tint to ensure vector trajectory and keyframes stand out
+        if (ortho_dimming_ > 0.0f) {
+            int alpha = std::clamp(static_cast<int>(ortho_dimming_ * 255.0f), 0, 255);
+            draw_list->AddRectFilled(
+                ImVec2(min_x, min_y),
+                ImVec2(max_x, max_y),
+                IM_COL32(10, 12, 16, alpha)
+            );
+        }
+    }
 
     float center_x = (min_x + max_x) * 0.5f;
     float center_y = (min_y + max_y) * 0.5f;
@@ -388,11 +596,11 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     for (int i = -10; i <= 10; ++i) {
         ImVec2 p1 = world_to_screen(Eigen::Vector3d(i * grid_step, 0.0, -2000.0));
         ImVec2 p2 = world_to_screen(Eigen::Vector3d(i * grid_step, 0.0, 2000.0));
-        draw_list->AddLine(p1, p2, IM_COL32(50, 55, 65, 120), 1.0f);
+        draw_list->AddLine(p1, p2, IM_COL32(80, 90, 110, 90), 1.0f);
 
         ImVec2 p3 = world_to_screen(Eigen::Vector3d(-2000.0, 0.0, i * grid_step));
         ImVec2 p4 = world_to_screen(Eigen::Vector3d(2000.0, 0.0, i * grid_step));
-        draw_list->AddLine(p3, p4, IM_COL32(50, 55, 65, 120), 1.0f);
+        draw_list->AddLine(p3, p4, IM_COL32(80, 90, 110, 90), 1.0f);
     }
 
     // Draw 3D Trajectory Spline Path
@@ -684,6 +892,10 @@ bool GuiApp::init() {
                     cam.far_plane = 15000.0;
                     renderer_->set_intrinsics(cam);
                 }
+
+                for (int i = 0; i < 3; ++i) {
+                    ortho_dirty_[i] = true;
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "[GuiApp] Warning: Filament renderer init failed (" << e.what() << "). Using procedural fallback." << std::endl;
@@ -716,6 +928,14 @@ void GuiApp::create_gl_textures() {
     sensor_texture_id_ = create_tex(sensor_tex_w_, sensor_tex_h_, sensor_img_buffer_.data());
     evs_texture_id_ = create_tex(sensor_tex_w_, sensor_tex_h_, evs_img_buffer_.data());
     orbit_texture_id_ = create_tex(sensor_tex_w_, sensor_tex_h_, sensor_img_buffer_.data());
+
+    for (int i = 0; i < 3; ++i) {
+        if (ortho_img_buffers_[i].size() != sensor_tex_w_ * sensor_tex_h_ * 3) {
+            ortho_img_buffers_[i].resize(sensor_tex_w_ * sensor_tex_h_ * 3, 25);
+        }
+        ortho_texture_id_[i] = create_tex(sensor_tex_w_, sensor_tex_h_, ortho_img_buffers_[i].data());
+        ortho_dirty_[i] = true;
+    }
 }
 
 void GuiApp::update_gl_textures() {
