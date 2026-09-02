@@ -146,24 +146,39 @@ void GuiApp::render_timeline_panel() {
     float total_h = vp->Size.y;
     float panel_y = total_h - timeline_height_px_;
 
-    // Resizable Splitter for timeline height
-    ImGui::SetNextWindowPos(ImVec2(0, panel_y - 6.0f));
-    ImGui::SetNextWindowSize(ImVec2(total_w, 6.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.18f, 0.20f, 0.25f, 0.8f));
-    ImGui::Begin("##TimelineSplitter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
-    if (ImGui::IsWindowHovered()) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 mouse_pos = io.MousePos;
+
+    static bool s_dragging_timeline = false;
+
+    // Persistent Drag State for Timeline Splitter
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (std::abs(mouse_pos.y - panel_y) < 8.0f) {
+            s_dragging_timeline = true;
+        }
+    }
+
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        s_dragging_timeline = false;
+    }
+
+    if (s_dragging_timeline) {
+        float new_h = total_h - mouse_pos.y;
+        timeline_height_px_ = std::clamp(new_h, 150.0f, total_h * 0.65f);
+        panel_y = total_h - timeline_height_px_;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    } else if (std::abs(mouse_pos.y - panel_y) < 8.0f) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     }
-    if (ImGui::IsWindowFocused() || (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
-        float new_h = total_h - ImGui::GetIO().MousePos.y;
-        timeline_height_px_ = std::clamp(new_h, 150.0f, total_h * 0.65f);
-    }
-    ImGui::End();
-    ImGui::PopStyleColor();
+
+    // Draw clean horizontal splitter divider line
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    ImU32 split_col = s_dragging_timeline ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
+    fg->AddLine(ImVec2(0, panel_y), ImVec2(total_w, panel_y), split_col, s_dragging_timeline ? 3.0f : 2.0f);
 
     // Timeline Main Window
-    ImGui::SetNextWindowPos(ImVec2(0, panel_y));
-    ImGui::SetNextWindowSize(ImVec2(total_w, timeline_height_px_));
+    ImGui::SetNextWindowPos(ImVec2(0, panel_y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(total_w, timeline_height_px_), ImGuiCond_Always);
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
 
     if (ImGui::Begin("##EarthStudioTimeline", nullptr, flags)) {

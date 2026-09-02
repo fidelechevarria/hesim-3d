@@ -12,91 +12,118 @@ void GuiApp::render_multi_viewport_grid() {
     float total_h = vp->Size.y;
 
     float header_h = 42.0f;
-    float upper_h = total_h - header_h - timeline_height_px_ - 6.0f;
+    float upper_h = total_h - header_h - timeline_height_px_ - 4.0f;
     float upper_y = header_h;
 
     float split_x = total_w * split_ratio_x_;
     float split_y = upper_h * split_ratio_y_;
 
-    // Resizable Splitters
-    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_2_SPLIT || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
-        // Vertical Splitter Bar between columns
-        ImGui::SetNextWindowPos(ImVec2(split_x - 3.0f, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(6.0f, upper_h));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.18f, 0.20f, 0.25f, 0.7f));
-        ImGui::Begin("##ColSplitter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
-        if (ImGui::IsWindowHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-        if (ImGui::IsWindowFocused() || (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
-            split_ratio_x_ = std::clamp(ImGui::GetIO().MousePos.x / total_w, 0.15f, 0.85f);
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 mouse_pos = io.MousePos;
+
+    static bool s_dragging_col = false;
+    static bool s_dragging_row = false;
+
+    // Handle Splitter Drag State
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_2_SPLIT || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+            if (std::abs(mouse_pos.x - split_x) < 8.0f && mouse_pos.y >= upper_y && mouse_pos.y <= upper_y + upper_h) {
+                s_dragging_col = true;
+            }
         }
-        ImGui::End();
-        ImGui::PopStyleColor();
+        if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+            if (std::abs(mouse_pos.y - (upper_y + split_y)) < 8.0f && mouse_pos.x >= 0.0f && mouse_pos.x <= total_w) {
+                s_dragging_row = true;
+            }
+        }
     }
 
-    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
-        // Horizontal Splitter Bar between rows
-        ImGui::SetNextWindowPos(ImVec2(0, upper_y + split_y - 3.0f));
-        ImGui::SetNextWindowSize(ImVec2(total_w, 6.0f));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.18f, 0.20f, 0.25f, 0.7f));
-        ImGui::Begin("##RowSplitter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove);
-        if (ImGui::IsWindowHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-        if (ImGui::IsWindowFocused() || (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
-            split_ratio_y_ = std::clamp((ImGui::GetIO().MousePos.y - upper_y) / upper_h, 0.15f, 0.85f);
-        }
-        ImGui::End();
-        ImGui::PopStyleColor();
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        s_dragging_col = false;
+        s_dragging_row = false;
     }
+
+    if (s_dragging_col) {
+        split_ratio_x_ = std::clamp(mouse_pos.x / total_w, 0.15f, 0.85f);
+        split_x = total_w * split_ratio_x_;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    } else if ((active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_2_SPLIT || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) &&
+               std::abs(mouse_pos.x - split_x) < 8.0f && mouse_pos.y >= upper_y && mouse_pos.y <= upper_y + upper_h) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    }
+
+    if (s_dragging_row) {
+        split_ratio_y_ = std::clamp((mouse_pos.y - upper_y) / upper_h, 0.15f, 0.85f);
+        split_y = upper_h * split_ratio_y_;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    } else if ((active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) &&
+               std::abs(mouse_pos.y - (upper_y + split_y)) < 8.0f && mouse_pos.x >= 0.0f && mouse_pos.x <= total_w) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    }
+
+    float gap = 2.0f;
 
     // Render Quadrants according to active_layout_
     if (active_layout_ == MultiViewLayout::VIEW_1_SINGLE) {
-        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(total_w, upper_h));
-        render_single_viewport(0, "Ventana Principal (Maximizada)", viewport_views_[1]); // Default camera
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(total_w, upper_h), ImGuiCond_Always);
+        render_single_viewport(0, "Ventana Principal (Maximizada)", viewport_views_[1]);
     } else if (active_layout_ == MultiViewLayout::VIEW_2_SPLIT) {
         // Left Column (Full height)
-        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(split_x, upper_h));
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(split_x - gap, upper_h), ImGuiCond_Always);
         render_single_viewport(0, "Ventana Izquierda", viewport_views_[0]);
 
         // Right Column (Full height)
-        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, upper_h));
+        ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, upper_h), ImGuiCond_Always);
         render_single_viewport(1, "Ventana Derecha", viewport_views_[1]);
     } else if (active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
         // Left Column (Full height)
-        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(split_x, upper_h));
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(split_x - gap, upper_h), ImGuiCond_Always);
         render_single_viewport(0, "Ventana Principal", viewport_views_[0]);
 
         // Right Top
-        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, split_y));
+        ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, split_y - gap), ImGuiCond_Always);
         render_single_viewport(1, "Ventana Superior Derecha", viewport_views_[1]);
 
         // Right Bottom
-        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y + split_y));
-        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, upper_h - split_y));
+        ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y + split_y + gap), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, upper_h - split_y - gap), ImGuiCond_Always);
         render_single_viewport(2, "Ventana Inferior Derecha", viewport_views_[2]);
     } else { // MultiViewLayout::VIEW_4_GRID (2x2 Grid)
         // Top-Left (Quad 0)
-        ImGui::SetNextWindowPos(ImVec2(0, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(split_x, split_y));
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(split_x - gap, split_y - gap), ImGuiCond_Always);
         render_single_viewport(0, "Cuadrante 1", viewport_views_[0]);
 
         // Top-Right (Quad 1)
-        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y));
-        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, split_y));
+        ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, split_y - gap), ImGuiCond_Always);
         render_single_viewport(1, "Cuadrante 2", viewport_views_[1]);
 
         // Bottom-Left (Quad 2)
-        ImGui::SetNextWindowPos(ImVec2(0, upper_y + split_y));
-        ImGui::SetNextWindowSize(ImVec2(split_x, upper_h - split_y));
+        ImGui::SetNextWindowPos(ImVec2(0, upper_y + split_y + gap), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(split_x - gap, upper_h - split_y - gap), ImGuiCond_Always);
         render_single_viewport(2, "Cuadrante 3", viewport_views_[2]);
 
         // Bottom-Right (Quad 3)
-        ImGui::SetNextWindowPos(ImVec2(split_x, upper_y + split_y));
-        ImGui::SetNextWindowSize(ImVec2(total_w - split_x, upper_h - split_y));
+        ImGui::SetNextWindowPos(ImVec2(split_x + gap, upper_y + split_y + gap), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(total_w - split_x - gap, upper_h - split_y - gap), ImGuiCond_Always);
         render_single_viewport(3, "Cuadrante 4", viewport_views_[3]);
+    }
+
+    // Draw clean visual splitter divider lines
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_2_SPLIT || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+        ImU32 col_c = s_dragging_col ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
+        fg->AddLine(ImVec2(split_x, upper_y), ImVec2(split_x, upper_y + upper_h), col_c, s_dragging_col ? 3.0f : 2.0f);
+    }
+    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+        ImU32 row_c = s_dragging_row ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
+        fg->AddLine(ImVec2(0, upper_y + split_y), ImVec2(total_w, upper_y + split_y), row_c, s_dragging_row ? 3.0f : 2.0f);
     }
 }
 
