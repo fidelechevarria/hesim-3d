@@ -51,6 +51,7 @@ private:
 
     double current_time_sec_{0.0};
     double playback_speed_{1.0};
+    int layout_init_frames_{5};
 
     SE3Spline spline_;
 

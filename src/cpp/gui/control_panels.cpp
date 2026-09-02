@@ -5,6 +5,16 @@
 namespace hesim3d {
 
 void GuiApp::render_control_panels() {
+    ImGuiIO& io = ImGui::GetIO();
+    float margin = 12.0f;
+    float left_w = 380.0f;
+    float screen_h = io.DisplaySize.y > 100.0f ? io.DisplaySize.y : static_cast<float>(config_.window_height);
+
+    ImGuiCond cond = (layout_init_frames_ > 0) ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+
+    ImGui::SetNextWindowPos(ImVec2(margin, margin), cond);
+    ImGui::SetNextWindowSize(ImVec2(left_w, screen_h - 2.0f * margin), cond);
+
     ImGui::Begin("Simulator Controls & Inspector", nullptr, ImGuiWindowFlags_NoCollapse);
 
     // ------------------------------------------------------------------------
@@ -99,6 +109,20 @@ void GuiApp::render_control_panels() {
             ImGui::PopStyleColor();
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "RECORDING ACTIVE...");
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 5. Layout & View Options
+    // ------------------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Window Layout & Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Button("↺ Reset Default Layout", ImVec2(180, 28))) {
+            layout_init_frames_ = 5;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Rearrange all viewports and control panels to default positions");
         }
     }
 
