@@ -11,6 +11,7 @@
 #include <Eigen/Geometry>
 
 #include "spline_se3.h"
+#include "filament_renderer.h"
 
 // Forward declare GLFWwindow at global scope
 struct GLFWwindow;
@@ -64,6 +65,9 @@ private:
     uint32_t sensor_tex_h_{480};
     std::vector<uint8_t> sensor_img_buffer_;
     std::vector<uint8_t> evs_img_buffer_;
+    std::vector<float> prev_lum_buffer_;
+
+    std::unique_ptr<FilamentRenderer> renderer_{nullptr};
 
     // Telemetry history for ImPlot
     static constexpr size_t MAX_PLOT_HISTORY = 1000;

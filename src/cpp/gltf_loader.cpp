@@ -3,6 +3,7 @@
 #include <gltfio/FilamentAsset.h>
 #include <gltfio/ResourceLoader.h>
 #include <gltfio/MaterialProvider.h>
+#include <gltfio/TextureProvider.h>
 #include <utils/EntityManager.h>
 #include <fstream>
 #include <iostream>
@@ -15,10 +16,10 @@ bool FilamentRenderer::load_scene(const std::string& glb_path) {
         return false;
     }
 
-    // Read GLB file
+    // Read GLB / glTF file
     std::ifstream file(glb_path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        std::cerr << "[FilamentRenderer] Failed to open GLB file: " << glb_path << std::endl;
+        std::cerr << "[FilamentRenderer] Failed to open scene file: " << glb_path << std::endl;
         return false;
     }
 
@@ -27,7 +28,7 @@ bool FilamentRenderer::load_scene(const std::string& glb_path) {
 
     std::vector<uint8_t> buffer(size);
     if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-        std::cerr << "[FilamentRenderer] Failed to read GLB contents from: " << glb_path << std::endl;
+        std::cerr << "[FilamentRenderer] Failed to read scene contents from: " << glb_path << std::endl;
         return false;
     }
 
@@ -56,13 +57,23 @@ bool FilamentRenderer::load_scene(const std::string& glb_path) {
         return false;
     }
 
-    gltfio::ResourceConfiguration res_config;
-    res_config.engine = engine_;
-    res_config.gltfPath = glb_path.c_str();
-    res_config.normalizeSkinningWeights = true;
+    if (!stb_provider_) {
+        stb_provider_ = gltfio::createStbProvider(engine_);
+    }
 
-    gltfio::ResourceLoader resource_loader(res_config);
-    if (!resource_loader.loadResources(asset_)) {
+    if (!resource_loader_) {
+        gltfio::ResourceConfiguration res_config;
+        res_config.engine = engine_;
+        res_config.gltfPath = glb_path.c_str();
+        res_config.normalizeSkinningWeights = true;
+        resource_loader_ = new gltfio::ResourceLoader(res_config);
+        if (stb_provider_) {
+            resource_loader_->addTextureProvider("image/png", stb_provider_);
+            resource_loader_->addTextureProvider("image/jpeg", stb_provider_);
+        }
+    }
+
+    if (!resource_loader_->loadResources(asset_)) {
         std::cerr << "[FilamentRenderer] Failed to load glTF resources for: " << glb_path << std::endl;
         asset_loader_->destroyAsset(asset_);
         asset_ = nullptr;

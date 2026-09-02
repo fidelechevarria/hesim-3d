@@ -94,6 +94,8 @@ private:
     gltfio::MaterialProvider* material_provider_{nullptr};
     gltfio::AssetLoader* asset_loader_{nullptr};
     gltfio::FilamentAsset* asset_{nullptr};
+    gltfio::ResourceLoader* resource_loader_{nullptr};
+    gltfio::TextureProvider* stb_provider_{nullptr};
 
     utils::Entity camera_entity_;
     CameraIntrinsics intrinsics_;

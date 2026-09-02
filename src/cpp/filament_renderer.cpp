@@ -66,6 +66,16 @@ void FilamentRenderer::cleanup() {
         asset_ = nullptr;
     }
 
+    if (resource_loader_) {
+        delete resource_loader_;
+        resource_loader_ = nullptr;
+    }
+
+    if (stb_provider_) {
+        delete stb_provider_;
+        stb_provider_ = nullptr;
+    }
+
     if (asset_loader_) {
         gltfio::AssetLoader::destroy(&asset_loader_);
     }
