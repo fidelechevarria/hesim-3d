@@ -29,6 +29,9 @@ def compute_sha256(file_path: Union[str, Path]) -> str:
     return hasher.hexdigest()
 
 
+from concurrent.futures import ThreadPoolExecutor
+
+
 def download_scene(
     scene_id_or_meta: Union[str, SceneMetadata],
     force: bool = False,
@@ -36,6 +39,7 @@ def download_scene(
 ) -> Path:
     """
     Download or resolve a 3D scene asset on demand with progress reporting and checksum verification.
+    Supports both single-file (.glb) and directory multi-file (.gltf) assets.
     """
     if isinstance(scene_id_or_meta, str):
         meta = get_scene_metadata(scene_id_or_meta)
@@ -52,6 +56,52 @@ def download_scene(
 
     # 2. Check cache directory
     cache_dir = get_cache_dir()
+
+    # Handle multi-file glTF scenes (e.g. Sponza Atrium)
+    if meta.format == "gltf" or "contents" in meta.url:
+        target_dir = cache_dir / meta.id
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        for candidate in target_dir.glob("*.gltf"):
+            if candidate.exists() and not force:
+                return candidate
+
+        headers = {"User-Agent": "hesim3d"}
+        response = requests.get(meta.url, headers=headers, timeout=30)
+        response.raise_for_status()
+        items = response.json()
+
+        total_bytes = sum(item.get("size", 0) for item in items if item.get("type") == "file")
+
+        with tqdm(
+            desc=f"Downloading {meta.name}",
+            total=total_bytes,
+            unit="iB",
+            unit_scale=True,
+            unit_divisor=1024,
+            disable=not show_progress,
+        ) as bar:
+            def download_one(item: dict) -> None:
+                if item.get("type") != "file":
+                    return
+                dst = target_dir / item["name"]
+                if dst.exists() and not force and dst.stat().st_size == item["size"]:
+                    bar.update(item["size"])
+                    return
+                r = requests.get(item["download_url"], headers=headers, timeout=60)
+                r.raise_for_status()
+                with open(dst, "wb") as f:
+                    f.write(r.content)
+                bar.update(len(r.content))
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(download_one, items))
+
+        for candidate in target_dir.glob("*.gltf"):
+            return candidate
+        return target_dir / f"{meta.id}.gltf"
+
+    # Single-file asset (.glb)
     target_path = cache_dir / f"{meta.id}.{meta.format}"
 
     if target_path.exists() and not force:
