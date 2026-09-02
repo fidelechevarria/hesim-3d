@@ -14,8 +14,15 @@
 #include <thread>
 #include <algorithm>
 #include <iomanip>
+#include <csignal>
+#include <filesystem>
 
 namespace hesim3d {
+
+static std::atomic<bool> g_gui_exit_requested{false};
+static void gui_signal_handler(int) {
+    g_gui_exit_requested.store(true);
+}
 
 static inline double deg_to_rad(double deg) { return deg * M_PI / 180.0; }
 static inline double rad_to_deg(double rad) { return rad * 180.0 / M_PI; }
@@ -26,6 +33,30 @@ static Eigen::Quaterniond euler_deg_to_quat(double yaw_deg, double pitch_deg, do
     Eigen::AngleAxisd pitch(deg_to_rad(pitch_deg), Eigen::Vector3d::UnitX());
     Eigen::AngleAxisd yaw(deg_to_rad(yaw_deg), Eigen::Vector3d::UnitY());
     return (yaw * pitch * roll).normalized();
+}
+
+GuiApp::~GuiApp() {
+    is_running_ = false;
+    if (renderer_) {
+        renderer_.reset();
+    }
+    if (window_) {
+        glfwMakeContextCurrent(window_);
+        if (sensor_texture_id_) { glDeleteTextures(1, &sensor_texture_id_); sensor_texture_id_ = 0; }
+        if (evs_texture_id_) { glDeleteTextures(1, &evs_texture_id_); evs_texture_id_ = 0; }
+        if (orbit_texture_id_) { glDeleteTextures(1, &orbit_texture_id_); orbit_texture_id_ = 0; }
+        if (sim_aps_texture_id_) { glDeleteTextures(1, &sim_aps_texture_id_); sim_aps_texture_id_ = 0; }
+        for (int i = 0; i < 3; ++i) {
+            if (ortho_texture_id_[i]) { glDeleteTextures(1, &ortho_texture_id_[i]); ortho_texture_id_[i] = 0; }
+        }
+        ImPlot::DestroyContext();
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window_);
+        glfwTerminate();
+        window_ = nullptr;
+    }
 }
 
 static Eigen::Vector3d quat_to_euler_deg(const Eigen::Quaterniond& q) {
@@ -80,18 +111,6 @@ GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
     }
 
     rebuild_trajectory();
-}
-
-GuiApp::~GuiApp() {
-    renderer_.reset();
-    if (window_) {
-        ImPlot::DestroyContext();
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        glfwDestroyWindow(window_);
-        glfwTerminate();
-    }
 }
 
 void GuiApp::set_spline(const SE3Spline& spline) {
@@ -846,7 +865,7 @@ bool GuiApp::init() {
         "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf"
     };
     for (const char* fpath : font_candidates) {
-        if (std::ifstream(fpath).good()) {
+        if (std::filesystem::exists(fpath)) {
             io.Fonts->AddFontFromFileTTF(fpath, 15.0f);
             break;
         }
@@ -979,9 +998,7 @@ void GuiApp::set_app_mode(AppMode mode) {
 }
 
 void GuiApp::render_simulation_progress_modal() {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
+    if (!is_simulating_) return;
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -999,14 +1016,6 @@ void GuiApp::render_simulation_progress_modal() {
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Computing Multi-Exposure Motion Blur + Quad-Bayer Noise + EVS Events...");
     }
     ImGui::End();
-
-    ImGui::Render();
-    int display_w, display_h;
-    glfwGetFramebufferSize(window_, &display_w, &display_h);
-    glViewport(0, 0, display_w, display_h);
-    glClearColor(0.09f, 0.09f, 0.10f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 void GuiApp::trigger_hesim_simulation() {
@@ -1038,11 +1047,6 @@ void GuiApp::trigger_hesim_simulation() {
         double frame_t = f * dt_aps;
         sim_progress_ = static_cast<float>(f) / static_cast<float>(total_aps_frames);
         sim_status_text_ = "Rendering frame " + std::to_string(f + 1) + " / " + std::to_string(total_aps_frames) + " (Motion Blur + EVS)...";
-
-        // Draw live modal progress dialog
-        render_simulation_progress_modal();
-        glfwSwapBuffers(window_);
-        glfwPollEvents();
 
         std::fill(accum_buf.begin(), accum_buf.end(), 0.0f);
 
@@ -1263,6 +1267,7 @@ void GuiApp::render_ui() {
     render_header_bar();
     render_multi_viewport_grid();
     render_timeline_panel();
+    render_simulation_progress_modal();
 
     ImGui::Render();
     int display_w, display_h;
@@ -1274,9 +1279,17 @@ void GuiApp::render_ui() {
 }
 
 void GuiApp::run() {
+    g_gui_exit_requested.store(false);
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = gui_signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+
     auto last_time = std::chrono::high_resolution_clock::now();
 
-    while (!glfwWindowShouldClose(window_) && is_running_) {
+    while (!glfwWindowShouldClose(window_) && is_running_ && !g_gui_exit_requested.load()) {
         glfwPollEvents();
 
         auto now = std::chrono::high_resolution_clock::now();
@@ -1287,6 +1300,9 @@ void GuiApp::run() {
         render_ui();
         glfwSwapBuffers(window_);
     }
+
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
 }
 
 void GuiApp::request_close() {

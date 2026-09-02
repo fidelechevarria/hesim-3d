@@ -81,6 +81,7 @@ void FilamentRenderer::cleanup() {
 
     if (asset_loader_) {
         gltfio::AssetLoader::destroy(&asset_loader_);
+        asset_loader_ = nullptr;
     }
 
     if (material_provider_) {
@@ -99,9 +100,13 @@ void FilamentRenderer::cleanup() {
         skybox_ = nullptr;
     }
 
-    if (sunlight_entity_) {
-        scene_->remove(sunlight_entity_);
+    if (!sunlight_entity_.isNull()) {
+        if (scene_) {
+            scene_->remove(sunlight_entity_);
+        }
         engine_->destroy(sunlight_entity_);
+        utils::EntityManager::get().destroy(sunlight_entity_);
+        sunlight_entity_ = utils::Entity();
     }
 
     if (ortho_camera_) {
@@ -137,6 +142,7 @@ void FilamentRenderer::cleanup() {
     }
 
     filament::Engine::destroy(&engine_);
+    engine_ = nullptr;
 }
 
 void FilamentRenderer::set_intrinsics(const CameraIntrinsics& intrinsics) {

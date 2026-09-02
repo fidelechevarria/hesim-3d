@@ -130,6 +130,8 @@ NB_MODULE(_hesim3d_core, m) {
         .def_rw("exposure_ms", &hesim3d::GuiConfig::exposure_ms)
         .def_rw("accumulation_window_ms", &hesim3d::GuiConfig::accumulation_window_ms);
 
-    m.def("launch_gui", &hesim3d::launch_gui, "config"_a, "Launch interactive Dear ImGui desktop visualizer");
+    m.def("launch_gui", &hesim3d::launch_gui, "config"_a,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "Launch interactive Dear ImGui desktop visualizer");
 #endif
 }
