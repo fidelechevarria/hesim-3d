@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+#include <filesystem>
 
 namespace hesim3d {
 
@@ -97,11 +98,26 @@ void GuiApp::render_header_bar() {
             ImGui::Separator();
 
             // Scenario & Sensor Quick Info
-            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "Scene: %s", config_.scene_path.empty() ? "Checkerboard" : "Sponza");
+            std::string scene_name = "Default";
+            if (!config_.scene_path.empty()) {
+                std::filesystem::path sp(config_.scene_path);
+                scene_name = sp.stem().string();
+            }
+            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "Scene: %s", scene_name.c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "Sensor: %s", config_.sensor_name.c_str());
+
+            // Nav speed slider
+            ImGui::SameLine();
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70);
+            ImGui::SliderFloat("Speed##nav", &nav_speed_factor_, 0.2f, 4.0f, "%.1fx");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Navigation sensitivity factor (relative to estimated scene scale)");
+            }
 
             // Center: Google Earth Studio Transport Controls
             float center_offset = (vp->Size.x - 380.0f) * 0.5f;
@@ -123,7 +139,15 @@ void GuiApp::render_header_bar() {
             if (is_playing_) {
                 if (ImGui::Button("||##pause", ImVec2(36, 22))) is_playing_ = false;
             } else {
+                bool can_play = (keyframes_.size() >= 2);
+                if (!can_play) ImGui::BeginDisabled();
                 if (ImGui::Button(">##play", ImVec2(36, 22))) is_playing_ = true;
+                if (!can_play) {
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("Add at least 2 keyframes to play trajectory");
+                    }
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button(">##next", ImVec2(28, 22))) {
@@ -142,12 +166,20 @@ void GuiApp::render_header_bar() {
                 if (right_pos > ImGui::GetCursorPosX()) {
                     ImGui::SetCursorPosX(right_pos);
                 }
+                bool can_sim = (keyframes_.size() >= 2);
+                if (!can_sim) ImGui::BeginDisabled();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.60f, 0.45f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.72f, 0.55f, 1.0f));
                 if (ImGui::Button("⚡ Run H-ESIM Simulation", ImVec2(225, 22))) {
                     trigger_hesim_simulation();
                 }
                 ImGui::PopStyleColor(2);
+                if (!can_sim) {
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("Capture at least 2 keyframes in timeline before simulation");
+                    }
+                }
             } else {
                 float right_pos = vp->Size.x - 420.0f;
                 if (right_pos > ImGui::GetCursorPosX()) {
@@ -261,18 +293,28 @@ void GuiApp::render_timeline_panel() {
             float y = static_cast<float>(camera_pos_.y());
             float z = static_cast<float>(camera_pos_.z());
 
+            double r_pos = scene_bounds_.valid ? scene_bounds_.radius : 2.0;
+            float step = static_cast<float>(std::max(0.0005, r_pos * 0.002)) * nav_speed_factor_;
+            float x_min = static_cast<float>(scene_bounds_.center.x() - r_pos * 5.0);
+            float x_max = static_cast<float>(scene_bounds_.center.x() + r_pos * 5.0);
+            float z_min = static_cast<float>(scene_bounds_.center.z() - r_pos * 5.0);
+            float z_max = static_cast<float>(scene_bounds_.center.z() + r_pos * 5.0);
+            float y_min = static_cast<float>(scene_bounds_.center.y() - r_pos * 5.0);
+            float y_max = static_cast<float>(scene_bounds_.center.y() + r_pos * 5.0);
+            const char* fmt = (r_pos < 10.0) ? "%.3f" : "%.1f";
+
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Longitude (X)", &x, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.x() = x;
+            if (ImGui::DragFloat("Longitude (X)", &x, step, x_min, x_max, fmt)) camera_pos_.x() = x;
             ImGui::SameLine();
             if (ImGui::SmallButton("[+]##kfx")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Latitude (Z)", &z, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.z() = z;
+            if (ImGui::DragFloat("Latitude (Z)", &z, step, z_min, z_max, fmt)) camera_pos_.z() = z;
             ImGui::SameLine();
             if (ImGui::SmallButton("[+]##kfz")) capture_keyframe_at_current_time();
 
             ImGui::SetNextItemWidth(120);
-            if (ImGui::DragFloat("Altitude (Y)", &y, 1.0f, -2000.0f, 2000.0f, "%.1f cm")) camera_pos_.y() = y;
+            if (ImGui::DragFloat("Altitude (Y)", &y, step, y_min, y_max, fmt)) camera_pos_.y() = y;
             ImGui::SameLine();
             if (ImGui::SmallButton("[+]##kfy")) capture_keyframe_at_current_time();
 
@@ -337,6 +379,21 @@ void GuiApp::render_timeline_panel() {
         for (int i = 0; i < 7; ++i) {
             float ly = canvas_p0.y + ruler_h + (i + 1) * lane_step;
             draw_list->AddLine(ImVec2(canvas_p0.x, ly), ImVec2(canvas_p1.x, ly), IM_COL32(40, 44, 52, 180), 1.0f);
+        }
+
+        // Guidance message when no or only 1 keyframe exists
+        if (keyframes_.empty()) {
+            std::string hint = "Free Camera Mode | Navigate with mouse and press [K] or [+ Capture Keyframe] to define trajectory";
+            ImVec2 txt_sz = ImGui::CalcTextSize(hint.c_str());
+            float tx = canvas_p0.x + std::max(20.0f, (canvas_sz.x - txt_sz.x) * 0.5f);
+            float ty = canvas_p0.y + ruler_h + 45.0f;
+            draw_list->AddText(ImVec2(tx, ty), IM_COL32(140, 175, 215, 220), hint.c_str());
+        } else if (keyframes_.size() == 1) {
+            std::string hint = "1 keyframe set. Move camera and capture at least 1 more keyframe to generate SE(3) spline.";
+            ImVec2 txt_sz = ImGui::CalcTextSize(hint.c_str());
+            float tx = canvas_p0.x + std::max(20.0f, (canvas_sz.x - txt_sz.x) * 0.5f);
+            float ty = canvas_p0.y + ruler_h + 45.0f;
+            draw_list->AddText(ImVec2(tx, ty), IM_COL32(240, 200, 90, 220), hint.c_str());
         }
 
         // Draw Keyframe Diamonds on tracks

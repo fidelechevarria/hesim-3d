@@ -85,46 +85,17 @@ GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
         ortho_dirty_[i] = true;
     }
 
-    // Initial default keyframes
-    bool is_sponza = (config_.scene_path.find("sponza") != std::string::npos);
-    bool is_chessboard = (config_.scene_path.find("chessboard") != std::string::npos ||
-                          config_.scene_path.find("ABeautifulGame") != std::string::npos ||
-                          config_.scene_path.find("beautiful") != std::string::npos);
-    if (is_sponza) {
-        ortho_scale_[0] = ortho_scale_[1] = ortho_scale_[2] = 0.25;
-        camera_pos_ = Eigen::Vector3d(0.0, 180.0, -450.0);
-        camera_yaw_deg_ = 0.0;
-        camera_pitch_deg_ = 0.0;
-        camera_roll_deg_ = 0.0;
+    // Default clean state: no preloaded keyframes (user creates or loads them)
+    keyframes_.clear();
+    path_samples_.clear();
+    selected_keyframe_idx_ = -1;
 
-        StudioKeyframe kf1{0.0, Eigen::Vector3d(0.0, 180.0, -450.0), Eigen::Vector3d(0.0, 0.0, 0.0), euler_deg_to_quat(0, 0, 0)};
-        StudioKeyframe kf2{2.5, Eigen::Vector3d(120.0, 200.0, 0.0), Eigen::Vector3d(18.0, -6.0, 0.0), euler_deg_to_quat(18, -6, 0)};
-        StudioKeyframe kf3{5.0, Eigen::Vector3d(0.0, 180.0, 450.0), Eigen::Vector3d(0.0, 0.0, 0.0), euler_deg_to_quat(0, 0, 0)};
-        keyframes_ = {kf1, kf2, kf3};
-    } else if (is_chessboard) {
-        ortho_scale_[0] = ortho_scale_[1] = ortho_scale_[2] = 250.0;
-        camera_pos_ = Eigen::Vector3d(0.0, 0.40, 0.50);
-        camera_yaw_deg_ = 0.0;
-        camera_pitch_deg_ = -35.0;
-        camera_roll_deg_ = 0.0;
-
-        StudioKeyframe kf1{0.0, Eigen::Vector3d(-0.35, 0.36, 0.42), Eigen::Vector3d(-22.0, -34.0, 0.0), euler_deg_to_quat(-22, -34, 0)};
-        StudioKeyframe kf2{2.5, Eigen::Vector3d(0.00, 0.42, 0.48), Eigen::Vector3d(0.0, -38.0, 0.0), euler_deg_to_quat(0, -38, 0)};
-        StudioKeyframe kf3{5.0, Eigen::Vector3d(0.35, 0.36, 0.42), Eigen::Vector3d(22.0, -34.0, 0.0), euler_deg_to_quat(22, -34, 0)};
-        keyframes_ = {kf1, kf2, kf3};
-    } else {
-        camera_pos_ = Eigen::Vector3d(0.0, 1.5, 2.5);
-        camera_yaw_deg_ = 0.0;
-        camera_pitch_deg_ = -10.0;
-        camera_roll_deg_ = 0.0;
-
-        StudioKeyframe kf1{0.0, Eigen::Vector3d(-2.0, 1.5, 2.0), Eigen::Vector3d(-20.0, -10.0, 0.0), euler_deg_to_quat(-20, -10, 0)};
-        StudioKeyframe kf2{2.5, Eigen::Vector3d(0.0, 1.8, 1.5), Eigen::Vector3d(0.0, -10.0, 0.0), euler_deg_to_quat(0, -10, 0)};
-        StudioKeyframe kf3{5.0, Eigen::Vector3d(2.0, 1.5, 2.0), Eigen::Vector3d(20.0, -10.0, 0.0), euler_deg_to_quat(20, -10, 0)};
-        keyframes_ = {kf1, kf2, kf3};
-    }
-
-    rebuild_trajectory();
+    // Default neutral framing until scene is loaded
+    camera_pos_ = Eigen::Vector3d(0.0, 1.5, 3.0);
+    camera_target_ = Eigen::Vector3d(0.0, 0.0, 0.0);
+    camera_yaw_deg_ = 25.0;
+    camera_pitch_deg_ = -22.0;
+    camera_roll_deg_ = 0.0;
 }
 
 void GuiApp::set_spline(const SE3Spline& spline) {
@@ -329,7 +300,7 @@ bool GuiApp::load_trajectory_from_json(const std::string& path) {
 }
 
 void GuiApp::compute_camera_pose(Eigen::Vector3d& out_pos, Eigen::Quaterniond& out_ori) {
-    if (is_playing_) {
+    if (is_playing_ && keyframes_.size() >= 2) {
         TrajectorySample sample = spline_.evaluate(current_time_sec_);
         out_pos = sample.position;
         out_ori = sample.orientation;
@@ -339,9 +310,46 @@ void GuiApp::compute_camera_pose(Eigen::Vector3d& out_pos, Eigen::Quaterniond& o
         camera_pitch_deg_ = euler.y();
         camera_roll_deg_ = euler.z();
     } else {
+        if (is_playing_) is_playing_ = false;
         out_pos = camera_pos_;
         out_ori = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
     }
+}
+
+void GuiApp::compute_optimal_initial_camera() {
+    Eigen::Vector3d center = scene_bounds_.valid ? scene_bounds_.center : Eigen::Vector3d(0.0, 0.0, 0.0);
+    double r = scene_bounds_.valid ? scene_bounds_.radius : 2.0;
+
+    // Google Earth Studio aesthetic elevated isometric framing
+    camera_target_ = center;
+    camera_yaw_deg_ = 25.0;
+    camera_pitch_deg_ = -22.0;
+    camera_roll_deg_ = 0.0;
+
+    // Compute required viewing distance D to frame the scene bounding sphere
+    // Intrinsics: fx=400, fy=400, W=640, H=480 -> tan(fov_y/2) = 0.60, tan(fov_x/2) = 0.80
+    double tan_fov_y_half = 0.60;
+    double tan_fov_x_half = 0.80;
+
+    double d_y = (r * 1.25) / tan_fov_y_half;
+    double d_x = (r * 1.25) / tan_fov_x_half;
+    double dist = std::max({d_y, d_x, 0.2});
+
+    orbit_radius_ = dist;
+
+    // Position camera at distance 'dist' along backwards look vector
+    Eigen::Quaterniond q = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
+    Eigen::Matrix3d R = q.toRotationMatrix();
+    Eigen::Vector3d look_dir = R * Eigen::Vector3d(0, 0, -1);
+
+    camera_pos_ = camera_target_ - look_dir * dist;
+
+    std::cout << "[GuiApp] Automatically framed camera for scene:" << std::endl
+              << "  - Scene Center:    [" << center.x() << ", " << center.y() << ", " << center.z() << "]" << std::endl
+              << "  - Scene Radius:    " << r << std::endl
+              << "  - Camera Distance: " << dist << std::endl
+              << "  - Initial Eye:     [" << camera_pos_.x() << ", " << camera_pos_.y() << ", " << camera_pos_.z() << "]" << std::endl
+              << "  - Pitch: " << camera_pitch_deg_ << " deg, Yaw: " << camera_yaw_deg_ << " deg" << std::endl;
 }
 
 void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, float max_y) {
@@ -359,9 +367,11 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
     Eigen::Vector3d look_dir = R * Eigen::Vector3d(0, 0, -1);
     Eigen::Vector3d right_dir = R * Eigen::Vector3d(1, 0, 0);
 
-    bool is_sponza = (config_.scene_path.find("sponza") != std::string::npos);
-    float pan_speed = is_sponza ? 1.5f : 0.02f;
-    float dolly_speed = is_sponza ? 2.5f : 0.03f;
+    // Adaptive navigation speeds proportional to estimated scene scale
+    double r = scene_bounds_.valid ? scene_bounds_.radius : 2.0;
+    float base_speed = static_cast<float>(r * 0.0018) * std::max(0.05f, nav_speed_factor_);
+    float pan_speed = std::max(0.0001f, base_speed);
+    float dolly_speed = std::max(0.0002f, base_speed * 1.5f);
 
     // 1. Left-Click + Drag: Horizontal Plane Pan (moves X/Z, keeps altitude Y constant)
     if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !io.KeyShift && !io.KeyCtrl) {
@@ -389,7 +399,7 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
 
     // 4. Mouse Wheel: Fast Dolly
     if (io.MouseWheel != 0.0f) {
-        camera_pos_ += look_dir * io.MouseWheel * (pan_speed * 18.0f);
+        camera_pos_ += look_dir * io.MouseWheel * (pan_speed * 15.0f);
     }
 
     // 5. Roll Keys (Q / E)
@@ -425,7 +435,7 @@ void GuiApp::update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h)
 void GuiApp::frame_ortho_view(int ortho_idx) {
     if (ortho_idx < 0 || ortho_idx > 2) return;
 
-    Eigen::Vector3d center(0.0, 180.0, 0.0);
+    Eigen::Vector3d center = scene_bounds_.valid ? scene_bounds_.center : Eigen::Vector3d(0.0, 0.0, 0.0);
     if (!keyframes_.empty()) {
         center.setZero();
         for (const auto& kf : keyframes_) {
@@ -434,18 +444,26 @@ void GuiApp::frame_ortho_view(int ortho_idx) {
         center /= static_cast<double>(keyframes_.size());
     }
 
-    bool is_sponza = (config_.scene_path.find("sponza") != std::string::npos);
-    double default_scale = is_sponza ? 0.25 : 20.0;
+    double cw = (last_canvas_w_[ortho_idx] > 50.0f) ? last_canvas_w_[ortho_idx] : 450.0;
+    double ch = (last_canvas_h_[ortho_idx] > 50.0f) ? last_canvas_h_[ortho_idx] : 350.0;
+    double canvas_fit = std::min(cw, ch) * 0.78;
 
-    if (ortho_idx == 0) {
+    double default_scale = 1.0;
+    if (ortho_idx == 0) { // Top view (X-Z)
+        double span = std::max({scene_bounds_.extent.x(), scene_bounds_.extent.z(), 0.05});
+        default_scale = canvas_fit / span;
         ortho_pan_[0] = Eigen::Vector2d(center.x(), center.z());
-        ortho_scale_[0] = default_scale;
-    } else if (ortho_idx == 1) {
+        ortho_scale_[0] = std::clamp(default_scale, 0.0001, 20000.0);
+    } else if (ortho_idx == 1) { // Front view (X-Y)
+        double span = std::max({scene_bounds_.extent.x(), scene_bounds_.extent.y(), 0.05});
+        default_scale = canvas_fit / span;
         ortho_pan_[1] = Eigen::Vector2d(center.x(), center.y());
-        ortho_scale_[1] = default_scale;
-    } else {
+        ortho_scale_[1] = std::clamp(default_scale, 0.0001, 20000.0);
+    } else { // Side view (Z-Y)
+        double span = std::max({scene_bounds_.extent.z(), scene_bounds_.extent.y(), 0.05});
+        default_scale = canvas_fit / span;
         ortho_pan_[2] = Eigen::Vector2d(center.z(), center.y());
-        ortho_scale_[2] = default_scale;
+        ortho_scale_[2] = std::clamp(default_scale, 0.0001, 20000.0);
     }
     ortho_dirty_[ortho_idx] = true;
 }
@@ -624,15 +642,21 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
         }
     };
 
-    // Draw coordinate grid lines
-    float grid_step = (config_.scene_path.find("sponza") != std::string::npos) ? 200.0f : 1.0f;
-    for (int i = -10; i <= 10; ++i) {
-        ImVec2 p1 = world_to_screen(Eigen::Vector3d(i * grid_step, 0.0, -2000.0));
-        ImVec2 p2 = world_to_screen(Eigen::Vector3d(i * grid_step, 0.0, 2000.0));
+    // Draw coordinate grid lines adaptively
+    double r_grid = scene_bounds_.valid ? scene_bounds_.radius : 1.0;
+    double log_val = std::floor(std::log10(std::max(0.001, r_grid * 0.15)));
+    float grid_step = static_cast<float>(std::pow(10.0, log_val));
+    if (r_grid / grid_step > 40.0) grid_step *= 5.0f;
+    else if (r_grid / grid_step > 20.0) grid_step *= 2.0f;
+    float grid_extent = grid_step * 15.0f;
+
+    for (int i = -12; i <= 12; ++i) {
+        ImVec2 p1 = world_to_screen(Eigen::Vector3d(i * grid_step, 0.0, -grid_extent));
+        ImVec2 p2 = world_to_screen(Eigen::Vector3d(i * grid_step, 0.0, grid_extent));
         draw_list->AddLine(p1, p2, IM_COL32(80, 90, 110, 90), 1.0f);
 
-        ImVec2 p3 = world_to_screen(Eigen::Vector3d(-2000.0, 0.0, i * grid_step));
-        ImVec2 p4 = world_to_screen(Eigen::Vector3d(2000.0, 0.0, i * grid_step));
+        ImVec2 p3 = world_to_screen(Eigen::Vector3d(-grid_extent, 0.0, i * grid_step));
+        ImVec2 p4 = world_to_screen(Eigen::Vector3d(grid_extent, 0.0, i * grid_step));
         draw_list->AddLine(p3, p4, IM_COL32(80, 90, 110, 90), 1.0f);
     }
 
@@ -910,36 +934,24 @@ bool GuiApp::init() {
             if (renderer_->load_scene(config_.scene_path)) {
                 std::cout << "[GuiApp] Successfully loaded 3D scene: " << config_.scene_path << std::endl;
 
-                std::string scene_lower = config_.scene_path;
-                for (auto& c : scene_lower) c = std::tolower(c);
+                // Retrieve dynamically estimated scene geometry bounds
+                scene_bounds_ = renderer_->get_scene_bounds();
+                compute_optimal_initial_camera();
 
-                if (scene_lower.find("sponza") != std::string::npos) {
-                    CameraIntrinsics cam;
-                    cam.width = sensor_tex_w_;
-                    cam.height = sensor_tex_h_;
-                    cam.fx = 400.0;
-                    cam.fy = 400.0;
-                    cam.cx = sensor_tex_w_ * 0.5;
-                    cam.cy = sensor_tex_h_ * 0.5;
-                    cam.near_plane = 5.0;
-                    cam.far_plane = 15000.0;
-                    renderer_->set_intrinsics(cam);
-                } else if (scene_lower.find("chessboard") != std::string::npos ||
-                           scene_lower.find("abeautifulgame") != std::string::npos ||
-                           scene_lower.find("beautiful") != std::string::npos) {
-                    CameraIntrinsics cam;
-                    cam.width = sensor_tex_w_;
-                    cam.height = sensor_tex_h_;
-                    cam.fx = 350.0;
-                    cam.fy = 350.0;
-                    cam.cx = sensor_tex_w_ * 0.5;
-                    cam.cy = sensor_tex_h_ * 0.5;
-                    cam.near_plane = 0.02; // 2 cm near clipping for close piece inspection
-                    cam.far_plane = 50.0;
-                    renderer_->set_intrinsics(cam);
-                }
+                // Configure camera clipping planes dynamically based on scene scale
+                CameraIntrinsics cam;
+                cam.width = sensor_tex_w_;
+                cam.height = sensor_tex_h_;
+                cam.fx = 400.0;
+                cam.fy = 400.0;
+                cam.cx = sensor_tex_w_ * 0.5;
+                cam.cy = sensor_tex_h_ * 0.5;
+                cam.near_plane = std::max(0.001, scene_bounds_.radius * 0.005);
+                cam.far_plane = std::max(50.0, scene_bounds_.radius * 35.0);
+                renderer_->set_intrinsics(cam);
 
                 for (int i = 0; i < 3; ++i) {
+                    frame_ortho_view(i);
                     ortho_dirty_[i] = true;
                 }
             }
@@ -1046,7 +1058,10 @@ void GuiApp::render_simulation_progress_modal() {
 }
 
 void GuiApp::trigger_hesim_simulation() {
-    if (!renderer_ || keyframes_.empty()) return;
+    if (!renderer_ || keyframes_.size() < 2) {
+        std::cerr << "[GuiApp] Trajectory requires at least 2 keyframes before running physical sensor simulation." << std::endl;
+        return;
+    }
 
     is_simulating_ = true;
     sim_progress_ = 0.0f;
@@ -1228,7 +1243,18 @@ void GuiApp::update_simulation_step(double dt) {
     compute_camera_pose(pos, ori);
 
     // Evaluate trajectory IMU kinematics
-    TrajectorySample sample = spline_.evaluate(current_time_sec_);
+    TrajectorySample sample;
+    sample.timestamp_sec = current_time_sec_;
+    sample.position = pos;
+    sample.orientation = ori;
+    sample.linear_velocity.setZero();
+    sample.linear_acceleration.setZero();
+    sample.angular_velocity_body.setZero();
+    sample.imu_acceleration = ori.conjugate() * Eigen::Vector3d(0.0, 9.81, 0.0);
+
+    if (keyframes_.size() >= 2 && spline_.num_control_points() >= 4) {
+        sample = spline_.evaluate(current_time_sec_);
+    }
 
     plot_time_.push_back(current_time_sec_);
     plot_gyro_x_.push_back(sample.angular_velocity_body.x());

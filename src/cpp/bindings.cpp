@@ -90,12 +90,25 @@ NB_MODULE(_hesim3d_core, m) {
         .def_rw("far_plane", &hesim3d::CameraIntrinsics::far_plane);
 
     // ------------------------------------------------------------------------
+    // Scene Bounds
+    // ------------------------------------------------------------------------
+    nb::class_<hesim3d::SceneBounds>(m, "SceneBounds")
+        .def(nb::init<>())
+        .def_rw("min_point", &hesim3d::SceneBounds::min_point)
+        .def_rw("max_point", &hesim3d::SceneBounds::max_point)
+        .def_rw("center", &hesim3d::SceneBounds::center)
+        .def_rw("extent", &hesim3d::SceneBounds::extent)
+        .def_rw("radius", &hesim3d::SceneBounds::radius)
+        .def_rw("valid", &hesim3d::SceneBounds::valid);
+
+    // ------------------------------------------------------------------------
     // Filament Renderer Wrapper
     // ------------------------------------------------------------------------
     nb::class_<hesim3d::FilamentRenderer>(m, "FilamentRenderer")
         .def(nb::init<uint32_t, uint32_t, const std::string&>(),
              "width"_a, "height"_a, "backend_type"_a = "vulkan")
         .def("load_scene", &hesim3d::FilamentRenderer::load_scene, "glb_path"_a)
+        .def("get_scene_bounds", &hesim3d::FilamentRenderer::get_scene_bounds)
         .def("load_environment", &hesim3d::FilamentRenderer::load_environment, "ibl_path"_a = "")
         .def("setup_default_lighting", &hesim3d::FilamentRenderer::setup_default_lighting)
         .def("set_intrinsics", &hesim3d::FilamentRenderer::set_intrinsics, "intrinsics"_a)

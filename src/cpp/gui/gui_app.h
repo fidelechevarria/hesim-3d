@@ -123,12 +123,14 @@ private:
 
     // Earth Studio Camera State (Free Camera & Navigation)
     bool is_free_camera_{true};
-    Eigen::Vector3d camera_pos_{0.0, 180.0, -400.0};
-    double camera_yaw_deg_{0.0};    // Heading / Pan (deg)
-    double camera_pitch_deg_{0.0};  // Tilt / Incline (deg)
+    SceneBounds scene_bounds_;
+    float nav_speed_factor_{1.0f};
+    Eigen::Vector3d camera_pos_{0.0, 1.5, 3.0};
+    double camera_yaw_deg_{25.0};   // Heading / Pan (deg)
+    double camera_pitch_deg_{-22.0}; // Tilt / Incline (deg)
     double camera_roll_deg_{0.0};   // Roll / Bank (deg)
-    Eigen::Vector3d camera_target_{0.0, 180.0, 0.0};
-    double orbit_radius_{400.0};
+    Eigen::Vector3d camera_target_{0.0, 0.0, 0.0};
+    double orbit_radius_{3.0};
 
     // Multi-View & Workflow Mode Configuration
     AppMode current_mode_{AppMode::TRAJECTORY_STUDIO};
@@ -227,6 +229,7 @@ private:
     void create_gl_textures();
     void update_gl_textures();
     void compute_camera_pose(Eigen::Vector3d& out_pos, Eigen::Quaterniond& out_ori);
+    void compute_optimal_initial_camera();
 };
 
 int launch_gui(const GuiConfig& config);

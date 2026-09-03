@@ -41,3 +41,17 @@ def test_builtin_scene_resolution():
 def test_invalid_scene_raises():
     with pytest.raises(FileNotFoundError):
         resolve_scene_path("non_existent_scene_xyz")
+
+
+def test_scene_bounds_estimation():
+    from hesim3d._hesim3d_core import FilamentRenderer
+    path = resolve_scene_path("checkerboard_room")
+    renderer = FilamentRenderer(320, 240, "opengl")
+    loaded = renderer.load_scene(str(path))
+    assert loaded is True
+    bounds = renderer.get_scene_bounds()
+    assert bounds.valid is True
+    assert bounds.radius > 0.1
+    assert bounds.extent[0] > 0.1
+    assert bounds.extent[1] > 0.1
+    assert bounds.extent[2] > 0.1

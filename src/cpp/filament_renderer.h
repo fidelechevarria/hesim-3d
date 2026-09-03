@@ -12,11 +12,14 @@
 #include <filament/IndirectLight.h>
 #include <filament/Skybox.h>
 #include <filament/LightManager.h>
+#include <filament/Box.h>
+#include <filament/RenderableManager.h>
 
 #include <gltfio/AssetLoader.h>
 #include <gltfio/FilamentAsset.h>
 #include <gltfio/ResourceLoader.h>
 #include <gltfio/MaterialProvider.h>
+#include <gltfio/TextureProvider.h>
 
 #include <utils/EntityManager.h>
 
@@ -33,6 +36,15 @@
 namespace hesim3d {
 
 namespace gltfio = filament::gltfio;
+
+struct SceneBounds {
+    Eigen::Vector3d min_point{-1.0, -1.0, -1.0};
+    Eigen::Vector3d max_point{1.0, 1.0, 1.0};
+    Eigen::Vector3d center{0.0, 0.0, 0.0};
+    Eigen::Vector3d extent{2.0, 2.0, 2.0};
+    double radius{1.732};
+    bool valid{false};
+};
 
 struct CameraIntrinsics {
     uint32_t width{640};
@@ -54,6 +66,7 @@ public:
     bool load_scene(const std::string& glb_path);
     bool load_environment(const std::string& ibl_path = "");
     void setup_default_lighting();
+    const SceneBounds& get_scene_bounds() const { return scene_bounds_; }
 
     // Camera Configuration
     void set_intrinsics(const CameraIntrinsics& intrinsics);
@@ -111,6 +124,7 @@ private:
 
     utils::Entity camera_entity_;
     CameraIntrinsics intrinsics_;
+    SceneBounds scene_bounds_;
 
     std::vector<uint8_t> readback_scratch_;
 

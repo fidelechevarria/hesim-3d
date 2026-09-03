@@ -100,8 +100,17 @@ Eigen::Matrix3d SE3Spline::right_jacobian_so3(const Eigen::Vector3d& omega) {
 }
 
 TrajectorySample SE3Spline::evaluate(double t_sec) const {
+    TrajectorySample sample;
+    sample.timestamp_sec = t_sec;
+    sample.position.setZero();
+    sample.orientation.setIdentity();
+    sample.linear_velocity.setZero();
+    sample.linear_acceleration.setZero();
+    sample.angular_velocity_body.setZero();
+    sample.imu_acceleration = -gravity_;
+
     if (positions_.size() < 4) {
-        throw std::runtime_error("Spline has not been initialized with at least 4 control points.");
+        return sample;
     }
 
     double t_clamped = std::clamp(t_sec, t_min_, t_max_ - 1e-9);
@@ -132,9 +141,6 @@ TrajectorySample SE3Spline::evaluate(double t_sec) const {
     double d2b1 = (-12.0 + 18.0 * u) / (6.0 * dt_ * dt_);
     double d2b2 = (6.0 - 18.0 * u) / (6.0 * dt_ * dt_);
     double d2b3 = (6.0 * u) / (6.0 * dt_ * dt_);
-
-    TrajectorySample sample;
-    sample.timestamp_sec = t_sec;
 
     // Translation and derivatives
     sample.position = b0 * positions_[i] + b1 * positions_[i + 1] + b2 * positions_[i + 2] + b3 * positions_[i + 3];
