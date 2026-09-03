@@ -885,6 +885,10 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     draw_list->AddLine(p_tr, p_br, base_col, 1.8f);
     draw_list->AddLine(p_br, p_bl, base_col, 1.8f);
     draw_list->AddLine(p_bl, p_tl, base_col, 1.8f);
+    draw_list->AddCircleFilled(p_tl, 0.9f, base_col, 8);
+    draw_list->AddCircleFilled(p_tr, 0.9f, base_col, 8);
+    draw_list->AddCircleFilled(p_br, 0.9f, base_col, 8);
+    draw_list->AddCircleFilled(p_bl, 0.9f, base_col, 8);
 
     // -------------------------------------------------------------------------
     // 2. 3D Orange Camera Body Pyramid Glyph (Google Earth Studio signature)
@@ -912,7 +916,7 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     ImVec2 b_br = world_to_screen(b_br_w);
     ImVec2 b_bl = world_to_screen(b_bl_w);
 
-    // Orthographic view direction for depth-sorting faces (painter's algorithm)
+    // Orthographic view direction for depth-sorting faces and backface culling
     Eigen::Vector3d view_dir(0, 0, 0);
     if (ortho_idx == 0) view_dir = Eigen::Vector3d(0, -1, 0);      // Top view (looking -Y)
     else if (ortho_idx == 1) view_dir = Eigen::Vector3d(0, 0, -1); // Front view (looking -Z)
@@ -922,48 +926,67 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     Eigen::Vector3d light_dir = Eigen::Vector3d(0.35, 0.85, 0.40).normalized();
 
     struct CameraBodyFace {
+        int id{0};
         std::vector<ImVec2> pts_2d;
         Eigen::Vector3d normal_3d;
         Eigen::Vector3d center_3d;
         double depth{0.0};
         bool is_quad{false};
+        bool is_front_facing{false};
     };
 
     std::vector<CameraBodyFace> body_faces;
 
-    // Top Face (Apex, TR, TL)
-    Eigen::Vector3d n_top = (b_tr_w - b_apex_w).cross(b_tl_w - b_apex_w).normalized();
-    Eigen::Vector3d c_top = (b_apex_w + b_tr_w + b_tl_w) / 3.0;
-    body_faces.push_back({{b_apex, b_tr, b_tl}, n_top, c_top, c_top.dot(view_dir), false});
+    // Outward normal computation for 3D camera body pyramid facets:
+    // Top Face (Apex, TL, TR)
+    Eigen::Vector3d n_top = (b_tl_w - b_apex_w).cross(b_tr_w - b_apex_w).normalized();
+    Eigen::Vector3d c_top = (b_apex_w + b_tl_w + b_tr_w) / 3.0;
+    body_faces.push_back({0, {b_apex, b_tl, b_tr}, n_top, c_top, c_top.dot(view_dir), false, n_top.dot(view_dir) < -1e-5});
 
-    // Right Face (Apex, BR, TR)
-    Eigen::Vector3d n_right = (b_br_w - b_apex_w).cross(b_tr_w - b_apex_w).normalized();
-    Eigen::Vector3d c_right = (b_apex_w + b_br_w + b_tr_w) / 3.0;
-    body_faces.push_back({{b_apex, b_br, b_tr}, n_right, c_right, c_right.dot(view_dir), false});
+    // Right Face (Apex, TR, BR)
+    Eigen::Vector3d n_right = (b_tr_w - b_apex_w).cross(b_br_w - b_apex_w).normalized();
+    Eigen::Vector3d c_right = (b_apex_w + b_tr_w + b_br_w) / 3.0;
+    body_faces.push_back({1, {b_apex, b_tr, b_br}, n_right, c_right, c_right.dot(view_dir), false, n_right.dot(view_dir) < -1e-5});
 
-    // Bottom Face (Apex, BL, BR)
-    Eigen::Vector3d n_bot = (b_bl_w - b_apex_w).cross(b_br_w - b_apex_w).normalized();
-    Eigen::Vector3d c_bot = (b_apex_w + b_bl_w + b_br_w) / 3.0;
-    body_faces.push_back({{b_apex, b_bl, b_br}, n_bot, c_bot, c_bot.dot(view_dir), false});
+    // Bottom Face (Apex, BR, BL)
+    Eigen::Vector3d n_bot = (b_br_w - b_apex_w).cross(b_bl_w - b_apex_w).normalized();
+    Eigen::Vector3d c_bot = (b_apex_w + b_br_w + b_bl_w) / 3.0;
+    body_faces.push_back({2, {b_apex, b_br, b_bl}, n_bot, c_bot, c_bot.dot(view_dir), false, n_bot.dot(view_dir) < -1e-5});
 
-    // Left Face (Apex, TL, BL)
-    Eigen::Vector3d n_left = (b_tl_w - b_apex_w).cross(b_bl_w - b_apex_w).normalized();
-    Eigen::Vector3d c_left = (b_apex_w + b_tl_w + b_bl_w) / 3.0;
-    body_faces.push_back({{b_apex, b_tl, b_bl}, n_left, c_left, c_left.dot(view_dir), false});
+    // Left Face (Apex, BL, TL)
+    Eigen::Vector3d n_left = (b_bl_w - b_apex_w).cross(b_tl_w - b_apex_w).normalized();
+    Eigen::Vector3d c_left = (b_apex_w + b_bl_w + b_tl_w) / 3.0;
+    body_faces.push_back({3, {b_apex, b_bl, b_tl}, n_left, c_left, c_left.dot(view_dir), false, n_left.dot(view_dir) < -1e-5});
 
     // Back Quad (TL, TR, BR, BL)
     Eigen::Vector3d n_back = -look_dir;
     Eigen::Vector3d c_back = b_base_center;
-    body_faces.push_back({{b_tl, b_tr, b_br, b_bl}, n_back, c_back, c_back.dot(view_dir), true});
+    body_faces.push_back({4, {b_tl, b_tr, b_br, b_bl}, n_back, c_back, c_back.dot(view_dir), true, n_back.dot(view_dir) < -1e-5});
 
-    // Sort back-to-front (largest depth first along view_dir)
-    std::sort(body_faces.begin(), body_faces.end(), [](const CameraBodyFace& a, const CameraBodyFace& b) {
+    // Fallback: ensure at least one face is active if edge-on
+    bool any_visible = false;
+    for (const auto& face : body_faces) {
+        if (face.is_front_facing) { any_visible = true; break; }
+    }
+    if (!any_visible) {
+        for (auto& face : body_faces) {
+            face.is_front_facing = (face.normal_3d.dot(view_dir) <= 0.0);
+        }
+    }
+
+    // Filter and depth-sort visible front-facing facets back-to-front
+    std::vector<CameraBodyFace> visible_faces;
+    for (const auto& face : body_faces) {
+        if (face.is_front_facing) {
+            visible_faces.push_back(face);
+        }
+    }
+    std::sort(visible_faces.begin(), visible_faces.end(), [](const CameraBodyFace& a, const CameraBodyFace& b) {
         return a.depth > b.depth;
     });
 
-    // Render sorted faces with Google Earth Studio directional orange tones
-    ImU32 outline_col = IM_COL32(40, 16, 10, 230);
-    for (const auto& face : body_faces) {
+    // 1. Render filled visible facets with directional lighting
+    for (const auto& face : visible_faces) {
         double dot = std::max(0.0, face.normal_3d.dot(light_dir));
         double intensity = 0.48 + 0.52 * dot;
 
@@ -974,10 +997,40 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
 
         if (face.is_quad) {
             draw_list->AddQuadFilled(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], face.pts_2d[3], face_col);
-            draw_list->AddQuad(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], face.pts_2d[3], outline_col, 1.2f);
         } else {
             draw_list->AddTriangleFilled(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], face_col);
-            draw_list->AddTriangle(face.pts_2d[0], face.pts_2d[1], face.pts_2d[2], outline_col, 1.2f);
+        }
+    }
+
+    // 2. Render visible wireframe edges using discrete line segments (AddLine)
+    // Avoids Dear ImGui miter spikes at acute projected polygon corners
+    struct BodyEdge {
+        ImVec2 p0;
+        ImVec2 p1;
+        int f1;
+        int f2;
+    };
+    const BodyEdge body_edges[8] = {
+        // Base rectangle edges (shared between corresponding side face and back quad)
+        {b_tl, b_tr, 0, 4},
+        {b_tr, b_br, 1, 4},
+        {b_br, b_bl, 2, 4},
+        {b_bl, b_tl, 3, 4},
+        // Pyramid ridge edges (shared between adjacent side faces)
+        {b_apex, b_tl, 0, 3},
+        {b_apex, b_tr, 0, 1},
+        {b_apex, b_br, 1, 2},
+        {b_apex, b_bl, 2, 3},
+    };
+
+    ImU32 outline_col = IM_COL32(40, 16, 10, 240);
+    float outline_thickness = 1.2f;
+    for (const auto& edge : body_edges) {
+        // An edge is visible if at least one of its adjacent faces is front-facing
+        if (body_faces[edge.f1].is_front_facing || body_faces[edge.f2].is_front_facing) {
+            draw_list->AddLine(edge.p0, edge.p1, outline_col, outline_thickness);
+            draw_list->AddCircleFilled(edge.p0, outline_thickness * 0.5f, outline_col, 8);
+            draw_list->AddCircleFilled(edge.p1, outline_thickness * 0.5f, outline_col, 8);
         }
     }
 
