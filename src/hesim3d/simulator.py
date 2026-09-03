@@ -29,7 +29,7 @@ class Simulator:
 
     def __init__(
         self,
-        scene: str = "checkerboard_room",
+        scene: str = "chessboard",
         sensor_config: Optional[SensorConfig] = None,
         trajectory: Optional[Trajectory] = None,
         imu_noise: Optional[ImuNoiseConfig] = None,

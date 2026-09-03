@@ -12,7 +12,7 @@ from hesim3d.sensor.config import SensorConfig
 
 
 def launch_interactive_gui(
-    scene: str = "checkerboard_room",
+    scene: str = "chessboard",
     sensor_name: str = "alpsentek_eiger",
     trajectory: str = "",
     duration_sec: float = 5.0,

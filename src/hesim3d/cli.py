@@ -23,7 +23,7 @@ def create_parser() -> argparse.ArgumentParser:
 
     # 1. run command
     run_p = subparsers.add_parser("run", help="Run batch headless simulation and export datasets")
-    run_p.add_argument("--scene", type=str, default="checkerboard_room", help="3D Scene ID or path (.glb)")
+    run_p.add_argument("--scene", type=str, default="chessboard", help="3D Scene ID or path (.glb)")
     run_p.add_argument("--sensor", type=str, default="alpsentek_eiger", help="Sensor preset name")
     run_p.add_argument("--trajectory", type=str, default="eight_loop", help="Trajectory preset (eight_loop, circle_orbit, random_walk)")
     run_p.add_argument("--duration", type=float, default=2.0, help="Simulation duration in seconds")
@@ -33,7 +33,7 @@ def create_parser() -> argparse.ArgumentParser:
 
     # 2. gui command
     gui_p = subparsers.add_parser("gui", help="Launch interactive Dear ImGui real-time visualizer")
-    gui_p.add_argument("--scene", type=str, default="checkerboard_room", help="3D Scene ID or path (.glb)")
+    gui_p.add_argument("--scene", type=str, default="chessboard", help="3D Scene ID or path (.glb)")
     gui_p.add_argument("--sensor", type=str, default="alpsentek_eiger", help="Sensor preset name")
     gui_p.add_argument("--trajectory", type=str, default="", help="Path to custom trajectory (.json) or preset")
     gui_p.add_argument("--duration", type=float, default=5.0, help="Loop duration in seconds")

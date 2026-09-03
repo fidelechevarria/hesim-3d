@@ -87,6 +87,9 @@ GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
 
     // Initial default keyframes
     bool is_sponza = (config_.scene_path.find("sponza") != std::string::npos);
+    bool is_chessboard = (config_.scene_path.find("chessboard") != std::string::npos ||
+                          config_.scene_path.find("ABeautifulGame") != std::string::npos ||
+                          config_.scene_path.find("beautiful") != std::string::npos);
     if (is_sponza) {
         ortho_scale_[0] = ortho_scale_[1] = ortho_scale_[2] = 0.25;
         camera_pos_ = Eigen::Vector3d(0.0, 180.0, -450.0);
@@ -97,6 +100,17 @@ GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
         StudioKeyframe kf1{0.0, Eigen::Vector3d(0.0, 180.0, -450.0), Eigen::Vector3d(0.0, 0.0, 0.0), euler_deg_to_quat(0, 0, 0)};
         StudioKeyframe kf2{2.5, Eigen::Vector3d(120.0, 200.0, 0.0), Eigen::Vector3d(18.0, -6.0, 0.0), euler_deg_to_quat(18, -6, 0)};
         StudioKeyframe kf3{5.0, Eigen::Vector3d(0.0, 180.0, 450.0), Eigen::Vector3d(0.0, 0.0, 0.0), euler_deg_to_quat(0, 0, 0)};
+        keyframes_ = {kf1, kf2, kf3};
+    } else if (is_chessboard) {
+        ortho_scale_[0] = ortho_scale_[1] = ortho_scale_[2] = 250.0;
+        camera_pos_ = Eigen::Vector3d(0.0, 0.40, 0.50);
+        camera_yaw_deg_ = 0.0;
+        camera_pitch_deg_ = -35.0;
+        camera_roll_deg_ = 0.0;
+
+        StudioKeyframe kf1{0.0, Eigen::Vector3d(-0.35, 0.36, 0.42), Eigen::Vector3d(-22.0, -34.0, 0.0), euler_deg_to_quat(-22, -34, 0)};
+        StudioKeyframe kf2{2.5, Eigen::Vector3d(0.00, 0.42, 0.48), Eigen::Vector3d(0.0, -38.0, 0.0), euler_deg_to_quat(0, -38, 0)};
+        StudioKeyframe kf3{5.0, Eigen::Vector3d(0.35, 0.36, 0.42), Eigen::Vector3d(22.0, -34.0, 0.0), euler_deg_to_quat(22, -34, 0)};
         keyframes_ = {kf1, kf2, kf3};
     } else {
         camera_pos_ = Eigen::Vector3d(0.0, 1.5, 2.5);
@@ -909,6 +923,19 @@ bool GuiApp::init() {
                     cam.cy = sensor_tex_h_ * 0.5;
                     cam.near_plane = 5.0;
                     cam.far_plane = 15000.0;
+                    renderer_->set_intrinsics(cam);
+                } else if (scene_lower.find("chessboard") != std::string::npos ||
+                           scene_lower.find("abeautifulgame") != std::string::npos ||
+                           scene_lower.find("beautiful") != std::string::npos) {
+                    CameraIntrinsics cam;
+                    cam.width = sensor_tex_w_;
+                    cam.height = sensor_tex_h_;
+                    cam.fx = 350.0;
+                    cam.fy = 350.0;
+                    cam.cx = sensor_tex_w_ * 0.5;
+                    cam.cy = sensor_tex_h_ * 0.5;
+                    cam.near_plane = 0.02; // 2 cm near clipping for close piece inspection
+                    cam.far_plane = 50.0;
                     renderer_->set_intrinsics(cam);
                 }
 

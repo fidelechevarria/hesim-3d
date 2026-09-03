@@ -23,6 +23,18 @@ class SceneMetadata:
 
 # Official scene benchmark catalog
 SCENE_CATALOG: Dict[str, SceneMetadata] = {
+    "chessboard": SceneMetadata(
+        id="chessboard",
+        name="A Beautiful Game (Chessboard)",
+        description="Photorealistic tournament chessboard with carved wooden pieces and PBR materials",
+        url="https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/ABeautifulGame/glTF-Binary/ABeautifulGame.glb",
+        sha256="bd7133b4b322aae97c589b8839dae8155ad2546acb35ae32a127e722a959d007",
+        size_mb=41.0,
+        license="CC-BY 4.0",
+        attribution="Moeen Sayed and Mujtaba Sayed for SideFX / Khronos Group",
+        built_in=False,
+        format="glb",
+    ),
     "checkerboard_room": SceneMetadata(
         id="checkerboard_room",
         name="Checkerboard Calibration Room",
@@ -71,6 +83,12 @@ SCENE_CATALOG: Dict[str, SceneMetadata] = {
     ),
 }
 
+SCENE_ALIASES: Dict[str, str] = {
+    "a_beautiful_game": "chessboard",
+    "abeautifulgame": "chessboard",
+    "chess": "chessboard",
+}
+
 
 def list_available_scenes() -> List[SceneMetadata]:
     """Return all registered scenes in the catalog."""
@@ -78,8 +96,9 @@ def list_available_scenes() -> List[SceneMetadata]:
 
 
 def get_scene_metadata(scene_id: str) -> SceneMetadata:
-    """Retrieve scene metadata by ID."""
+    """Retrieve scene metadata by ID or alias."""
     scene_key = scene_id.strip().lower()
+    scene_key = SCENE_ALIASES.get(scene_key, scene_key)
     if scene_key in SCENE_CATALOG:
         return SCENE_CATALOG[scene_key]
     raise KeyError(f"Scene '{scene_id}' not found in catalog. Available: {list(SCENE_CATALOG.keys())}")

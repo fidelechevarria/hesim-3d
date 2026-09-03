@@ -157,8 +157,11 @@ def resolve_scene_path(scene_identifier: str) -> Path:
         return p.resolve()
 
     scene_key = scene_identifier.strip().lower()
-    if scene_key in SCENE_CATALOG:
-        return download_scene(scene_key)
+    try:
+        meta = get_scene_metadata(scene_key)
+        return download_scene(meta)
+    except KeyError:
+        pass
 
     raise FileNotFoundError(
         f"Could not find or resolve scene '{scene_identifier}'. Check file path or catalog ID."
