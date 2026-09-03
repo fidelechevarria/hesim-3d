@@ -138,6 +138,7 @@ void GuiApp::render_header_bar() {
             if (ImGui::Button(ICON_MDI_STEP_BACKWARD "##prev", ImVec2(28, 22))) {
                 is_playing_ = false;
                 current_time_sec_ = std::max(0.0, current_time_sec_ - 1.0 / 30.0);
+                apply_spline_sample_at(current_time_sec_);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step backward 1 frame (-33ms)");
 
@@ -165,6 +166,7 @@ void GuiApp::render_header_bar() {
             if (ImGui::Button(ICON_MDI_STEP_FORWARD "##next", ImVec2(28, 22))) {
                 is_playing_ = false;
                 current_time_sec_ = std::min(config_.duration_sec, current_time_sec_ + 1.0 / 30.0);
+                apply_spline_sample_at(current_time_sec_);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step forward 1 frame (+33ms)");
 
@@ -460,6 +462,7 @@ void GuiApp::render_timeline_panel() {
             float relative_x = mouse_x - (canvas_p0.x + 10.0f);
             float ratio = std::clamp(relative_x / (canvas_sz.x - 20.0f), 0.0f, 1.0f);
             current_time_sec_ = ratio * total_time;
+            apply_spline_sample_at(current_time_sec_);
         }
 
         // Draw Yellow Playhead Line

@@ -123,7 +123,7 @@ class Trajectory:
             if "orientation_xyzw" in k:
                 orientations.append(k["orientation_xyzw"])
             elif "rotation_euler_deg" in k:
-                r = Rotation.from_euler("zyx", k["rotation_euler_deg"], degrees=True)
+                r = Rotation.from_euler("YXZ", k["rotation_euler_deg"], degrees=True)
                 orientations.append(r.as_quat().tolist())
             else:
                 orientations.append([0.0, 0.0, 0.0, 1.0])
@@ -160,7 +160,7 @@ class Trajectory:
             q = sample.orientation_xyzw
             # Convert orientation to euler angles (yaw, pitch, roll in degrees)
             r = Rotation.from_quat([q[0], q[1], q[2], q[3]])
-            euler = r.as_euler("zyx", degrees=True).tolist() # [yaw/pan, pitch/tilt, roll]
+            euler = r.as_euler("YXZ", degrees=True).tolist() # [yaw/pan, pitch/tilt, roll]
             
             keyframes.append({
                 "time_sec": float(t),

@@ -62,15 +62,23 @@ GuiApp::~GuiApp() {
 
 static Eigen::Vector3d quat_to_euler_deg(const Eigen::Quaterniond& q) {
     Eigen::Matrix3d R = q.toRotationMatrix();
-    // Extract Euler angles Y-X-Z
-    double pitch = std::asin(std::clamp(R(1, 2), -1.0, 1.0));
+    // Extract Euler angles for Earth Studio convention: R = R_y(yaw) * R_x(pitch) * R_z(roll)
+    // R(1, 2) = -sin(pitch)
+    double pitch = -std::asin(std::clamp(R(1, 2), -1.0, 1.0));
     double yaw = 0.0;
     double roll = 0.0;
     if (std::abs(std::cos(pitch)) > 1e-6) {
-        yaw = std::atan2(-R(0, 2), R(2, 2));
-        roll = std::atan2(-R(1, 0), R(1, 1));
+        // R(0, 2) = sin(yaw)*cos(pitch), R(2, 2) = cos(yaw)*cos(pitch)
+        yaw = std::atan2(R(0, 2), R(2, 2));
+        // R(1, 0) = cos(pitch)*sin(roll), R(1, 1) = cos(pitch)*cos(roll)
+        roll = std::atan2(R(1, 0), R(1, 1));
     } else {
-        yaw = std::atan2(R(0, 1), R(0, 0));
+        // Gimbal lock handling at pitch = +- 90 deg
+        if (pitch > 0.0) {
+            yaw = std::atan2(R(0, 1), R(0, 0));
+        } else {
+            yaw = std::atan2(-R(0, 1), R(0, 0));
+        }
         roll = 0.0;
     }
     return Eigen::Vector3d(rad_to_deg(yaw), rad_to_deg(pitch), rad_to_deg(roll));
@@ -300,21 +308,24 @@ bool GuiApp::load_trajectory_from_json(const std::string& path) {
     return false;
 }
 
+void GuiApp::apply_spline_sample_at(double t) {
+    if (keyframes_.size() < 2) return;
+    TrajectorySample sample = spline_.evaluate(t);
+    camera_pos_ = sample.position;
+    Eigen::Vector3d euler = quat_to_euler_deg(sample.orientation);
+    camera_yaw_deg_ = euler.x();
+    camera_pitch_deg_ = euler.y();
+    camera_roll_deg_ = euler.z();
+}
+
 void GuiApp::compute_camera_pose(Eigen::Vector3d& out_pos, Eigen::Quaterniond& out_ori) {
     if (is_playing_ && keyframes_.size() >= 2) {
-        TrajectorySample sample = spline_.evaluate(current_time_sec_);
-        out_pos = sample.position;
-        out_ori = sample.orientation;
-        camera_pos_ = sample.position;
-        Eigen::Vector3d euler = quat_to_euler_deg(sample.orientation);
-        camera_yaw_deg_ = euler.x();
-        camera_pitch_deg_ = euler.y();
-        camera_roll_deg_ = euler.z();
+        apply_spline_sample_at(current_time_sec_);
     } else {
         if (is_playing_) is_playing_ = false;
-        out_pos = camera_pos_;
-        out_ori = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
     }
+    out_pos = camera_pos_;
+    out_ori = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
 }
 
 void GuiApp::compute_optimal_initial_camera() {

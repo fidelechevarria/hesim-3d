@@ -244,6 +244,7 @@ private:
     void create_gl_textures();
     void update_gl_textures();
     void compute_camera_pose(Eigen::Vector3d& out_pos, Eigen::Quaterniond& out_ori);
+    void apply_spline_sample_at(double t);
     void compute_optimal_initial_camera();
 };
 

@@ -69,3 +69,34 @@ def test_simulation_with_json_trajectory():
         results = sim.run(duration_sec=0.2, sim_fps=200.0, output_path=out_h5, show_progress=False)
         assert results["duration_sec"] == 0.2
         assert out_h5.exists()
+
+
+def test_earth_studio_euler_roundtrip():
+    """Verify Earth Studio convention (YXZ / [Yaw, Pitch, Roll]) preserves orientation and angles."""
+    from scipy.spatial.transform import Rotation
+
+    test_angles = [
+        [0.0, 0.0, 0.0],
+        [25.0, -22.0, 0.0], # User default orientation
+        [-45.0, 30.0, 15.0],
+        [120.0, -60.0, -45.0],
+    ]
+
+    for y, p, r in test_angles:
+        rot = Rotation.from_euler("YXZ", [y, p, r], degrees=True)
+        q = rot.as_quat()
+        rec_rot = Rotation.from_quat(q)
+        rec_euler = rec_rot.as_euler("YXZ", degrees=True)
+        assert np.allclose([y, p, r], rec_euler, atol=1e-5)
+
+        # Also verify through Trajectory keyframe pipeline
+        kfs = [
+            {"time_sec": 0.0, "position": [0.0, 1.0, 2.0], "rotation_euler_deg": [y, p, r]},
+            {"time_sec": 1.0, "position": [1.0, 1.0, 2.0], "rotation_euler_deg": [y, p, r]},
+        ]
+        traj = Trajectory.from_keyframes(kfs, total_duration_sec=1.0)
+        sample = traj.evaluate(0.0)
+        s_rot = Rotation.from_quat(sample.orientation_xyzw)
+        s_euler = s_rot.as_euler("YXZ", degrees=True)
+        assert np.allclose([y, p, r], s_euler, atol=1e-2)
+
