@@ -1675,6 +1675,10 @@ void GuiApp::trigger_hesim_simulation() {
     sim_progress_ = 0.0f;
     sim_status_text_ = "Preparing H-ESIM simulation parameters...";
 
+    uint32_t saved_cam_w = camera_render_w_;
+    uint32_t saved_cam_h = camera_render_h_;
+    renderer_->resize_camera(sensor_tex_w_, sensor_tex_h_);
+
     double duration = std::max(0.5, config_.duration_sec);
     int aps_fps = 30;
     int total_aps_frames = std::max(1, static_cast<int>(duration * aps_fps));
@@ -1763,6 +1767,10 @@ void GuiApp::trigger_hesim_simulation() {
     sim_total_frames_ = sim_aps_frames_.size();
     simulation_has_data_ = true;
     is_simulating_ = false;
+
+    if (saved_cam_w > 0 && saved_cam_h > 0) {
+        resize_camera_render(saved_cam_w, saved_cam_h);
+    }
 
     set_app_mode(AppMode::SENSOR_SIMULATION);
 }

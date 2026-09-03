@@ -247,21 +247,111 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
         switch (viewport_views_[quad_idx]) {
             case ViewportContent::CAMERA_CLEAN: {
                 if (avail_sz.x > 10.0f && avail_sz.y > 10.0f) {
-                    float tex_aspect = static_cast<float>(sensor_tex_w_) / static_cast<float>(sensor_tex_h_);
-                    float avail_aspect = avail_sz.x / avail_sz.y;
-                    float draw_w = (avail_aspect > tex_aspect) ? (avail_sz.y * tex_aspect) : avail_sz.x;
-                    float draw_h = (avail_aspect > tex_aspect) ? avail_sz.y : (avail_sz.x / tex_aspect);
-
-                    uint32_t tw = (static_cast<uint32_t>(draw_w) + 3) & ~3u;
-                    uint32_t th = (static_cast<uint32_t>(draw_h) + 1) & ~1u;
+                    // Full-bleed viewport render (Google Earth Studio / Blender Passepartout style)
+                    uint32_t tw = (static_cast<uint32_t>(avail_sz.x) + 3) & ~3u;
+                    uint32_t th = (static_cast<uint32_t>(avail_sz.y) + 1) & ~1u;
 
                     int thresh = (layout_settle_frames_ > 0) ? 0 : 8;
                     if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > thresh ||
                         std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > thresh) {
                         resize_camera_render(tw, th);
                     }
+
+                    if (sensor_texture_id_ != 0) {
+                        // 1. Render 3D scene across full viewport canvas
+                        ImGui::SetCursorScreenPos(canvas_p0);
+                        ImGui::Image((ImTextureID)(intptr_t)sensor_texture_id_, avail_sz);
+
+                        // 2. Compute physical sensor frame bounding rectangle
+                        float sensor_aspect = static_cast<float>(sensor_tex_w_) / std::max(1.0f, static_cast<float>(sensor_tex_h_));
+                        float avail_aspect = avail_sz.x / avail_sz.y;
+                        float frame_w = avail_sz.x;
+                        float frame_h = avail_sz.y;
+                        float frame_x0 = canvas_p0.x;
+                        float frame_y0 = canvas_p0.y;
+
+                        if (avail_aspect > sensor_aspect) {
+                            // Viewport is wider than sensor: pillarbox bands on left & right
+                            frame_w = avail_sz.y * sensor_aspect;
+                            frame_h = avail_sz.y;
+                            frame_x0 = canvas_p0.x + (avail_sz.x - frame_w) * 0.5f;
+                            frame_y0 = canvas_p0.y;
+                        } else {
+                            // Viewport is taller than sensor: letterbox bands on top & bottom
+                            frame_w = avail_sz.x;
+                            frame_h = avail_sz.x / sensor_aspect;
+                            frame_x0 = canvas_p0.x;
+                            frame_y0 = canvas_p0.y + (avail_sz.y - frame_h) * 0.5f;
+                        }
+                        float frame_x1 = frame_x0 + frame_w;
+                        float frame_y1 = frame_y0 + frame_h;
+
+                        draw_list->PushClipRect(canvas_p0, canvas_p1, true);
+
+                        // 3. Passepartout shaded overlay for inactive sensor bands (Google Earth Studio style)
+                        const ImU32 shade_col = IM_COL32(10, 12, 16, 175); // ~68% dark scrim
+                        if (avail_aspect > sensor_aspect) {
+                            if (frame_x0 > canvas_p0.x) {
+                                draw_list->AddRectFilled(canvas_p0, ImVec2(frame_x0, canvas_p1.y), shade_col);
+                            }
+                            if (canvas_p1.x > frame_x1) {
+                                draw_list->AddRectFilled(ImVec2(frame_x1, canvas_p0.y), canvas_p1, shade_col);
+                            }
+                        } else {
+                            if (frame_y0 > canvas_p0.y) {
+                                draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p1.x, frame_y0), shade_col);
+                            }
+                            if (canvas_p1.y > frame_y1) {
+                                draw_list->AddRectFilled(ImVec2(canvas_p0.x, frame_y1), canvas_p1, shade_col);
+                            }
+                        }
+
+                        // 4. Sensor Frame Boundary (crisp subtle border)
+                        const ImU32 frame_border_col = IM_COL32(230, 240, 255, 160);
+                        draw_list->AddRect(ImVec2(frame_x0, frame_y0), ImVec2(frame_x1, frame_y1), frame_border_col, 0.0f, 0, 1.5f);
+
+                        // Corner brackets for high-end studio camera feel
+                        float corner_len = std::min(18.0f, std::min(frame_w, frame_h) * 0.12f);
+                        const ImU32 corner_col = IM_COL32(0, 190, 255, 220);
+                        // Top-Left
+                        draw_list->AddLine(ImVec2(frame_x0, frame_y0), ImVec2(frame_x0 + corner_len, frame_y0), corner_col, 2.5f);
+                        draw_list->AddLine(ImVec2(frame_x0, frame_y0), ImVec2(frame_x0, frame_y0 + corner_len), corner_col, 2.5f);
+                        // Top-Right
+                        draw_list->AddLine(ImVec2(frame_x1, frame_y0), ImVec2(frame_x1 - corner_len, frame_y0), corner_col, 2.5f);
+                        draw_list->AddLine(ImVec2(frame_x1, frame_y0), ImVec2(frame_x1, frame_y0 + corner_len), corner_col, 2.5f);
+                        // Bottom-Left
+                        draw_list->AddLine(ImVec2(frame_x0, frame_y1), ImVec2(frame_x0 + corner_len, frame_y1), corner_col, 2.5f);
+                        draw_list->AddLine(ImVec2(frame_x0, frame_y1), ImVec2(frame_x0, frame_y1 - corner_len), corner_col, 2.5f);
+                        // Bottom-Right
+                        draw_list->AddLine(ImVec2(frame_x1, frame_y1), ImVec2(frame_x1 - corner_len, frame_y1), corner_col, 2.5f);
+                        draw_list->AddLine(ImVec2(frame_x1, frame_y1), ImVec2(frame_x1, frame_y1 - corner_len), corner_col, 2.5f);
+
+                        // 5. Subtle Sensor Info Badge
+                        char badge_buf[64];
+                        std::snprintf(badge_buf, sizeof(badge_buf), "%u x %u (Sensor Gate)", sensor_tex_w_, sensor_tex_h_);
+                        ImVec2 badge_sz = ImGui::CalcTextSize(badge_buf);
+                        ImVec2 badge_pos = ImVec2(frame_x1 - badge_sz.x - 8.0f, frame_y1 - badge_sz.y - 6.0f);
+                        if (badge_pos.x > frame_x0 + 10.0f && badge_pos.y > frame_y0 + 10.0f) {
+                            draw_list->AddRectFilled(
+                                ImVec2(badge_pos.x - 4.0f, badge_pos.y - 2.0f),
+                                ImVec2(badge_pos.x + badge_sz.x + 4.0f, badge_pos.y + badge_sz.y + 2.0f),
+                                IM_COL32(15, 18, 24, 180), 3.0f
+                            );
+                            draw_list->AddText(badge_pos, IM_COL32(180, 210, 255, 210), badge_buf);
+                        }
+
+                        // 6. Center target reticle
+                        float cx = frame_x0 + frame_w * 0.5f;
+                        float cy = frame_y0 + frame_h * 0.5f;
+                        draw_list->AddCircle(ImVec2(cx, cy), 14.0f, IM_COL32(95, 120, 240, 180), 16, 1.5f);
+                        draw_list->AddLine(ImVec2(cx - 20, cy), ImVec2(cx - 5, cy), IM_COL32(95, 120, 240, 180), 1.5f);
+                        draw_list->AddLine(ImVec2(cx + 5, cy), ImVec2(cx + 20, cy), IM_COL32(95, 120, 240, 180), 1.5f);
+                        draw_list->AddLine(ImVec2(cx, cy - 20), ImVec2(cx, cy - 5), IM_COL32(95, 120, 240, 180), 1.5f);
+                        draw_list->AddLine(ImVec2(cx, cy + 5), ImVec2(cx, cy + 20), IM_COL32(95, 120, 240, 180), 1.5f);
+
+                        draw_list->PopClipRect();
+                    }
                 }
-                render_aspect_image(sensor_texture_id_, camera_render_w_, camera_render_h_);
                 handle_camera_mouse_input(canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
                 break;
             }

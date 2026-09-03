@@ -95,6 +95,7 @@ public:
 
     uint32_t width() const { return width_; }
     uint32_t height() const { return height_; }
+    const CameraIntrinsics& sensor_intrinsics() const { return sensor_intrinsics_; }
 
     filament::Engine* get_engine() { return engine_; }
     filament::Scene* get_scene() { return scene_; }
@@ -131,11 +132,13 @@ private:
 
     utils::Entity camera_entity_;
     CameraIntrinsics intrinsics_;
+    CameraIntrinsics sensor_intrinsics_;
     SceneBounds scene_bounds_;
 
     std::vector<uint8_t> readback_scratch_;
 
     void init_engine();
+    void update_camera_projection();
     void cleanup();
 };
 

@@ -58,6 +58,13 @@ void FilamentRenderer::init_engine() {
     view_->setShadowingEnabled(true);
 
     setup_default_lighting();
+
+    sensor_intrinsics_.width = width_;
+    sensor_intrinsics_.height = height_;
+    sensor_intrinsics_.cx = width_ * 0.5;
+    sensor_intrinsics_.cy = height_ * 0.5;
+    intrinsics_ = sensor_intrinsics_;
+    update_camera_projection();
 }
 
 void FilamentRenderer::cleanup() {
@@ -150,6 +157,34 @@ void FilamentRenderer::cleanup() {
     engine_ = nullptr;
 }
 
+void FilamentRenderer::update_camera_projection() {
+    if (!camera_) return;
+
+    double sensor_w = std::max(1.0, static_cast<double>(sensor_intrinsics_.width));
+    double sensor_h = std::max(1.0, static_cast<double>(sensor_intrinsics_.height));
+    double fy = (sensor_intrinsics_.fy > 1e-4) ? sensor_intrinsics_.fy : 400.0;
+
+    double sensor_aspect = sensor_w / sensor_h;
+    double vp_w = std::max(1.0, static_cast<double>(width_));
+    double vp_h = std::max(1.0, static_cast<double>(height_));
+    double vp_aspect = vp_w / vp_h;
+
+    // Preserve exact physical sensor framing inside the viewport:
+    // If vp_aspect >= sensor_aspect, sensor frame spans full viewport height, so fov_y matches sensor.
+    // If vp_aspect < sensor_aspect, sensor frame spans full viewport width, so fov_y expands by (sensor_aspect / vp_aspect).
+    double tan_half_fov_y_sensor = 0.5 * sensor_h / fy;
+    double scale = std::max(1.0, sensor_aspect / vp_aspect);
+    double tan_half_fov_y_vp = scale * tan_half_fov_y_sensor;
+    double fov_y_deg = 2.0 * std::atan(tan_half_fov_y_vp) * 180.0 / std::numbers::pi;
+
+    intrinsics_.width = width_;
+    intrinsics_.height = height_;
+    intrinsics_.cx = width_ * 0.5;
+    intrinsics_.cy = height_ * 0.5;
+
+    camera_->setProjection(fov_y_deg, vp_aspect, sensor_intrinsics_.near_plane, sensor_intrinsics_.far_plane, filament::Camera::Fov::VERTICAL);
+}
+
 void FilamentRenderer::resize_camera(uint32_t width, uint32_t height) {
     if (width < 32) width = 32;
     if (height < 32) height = 32;
@@ -172,27 +207,15 @@ void FilamentRenderer::resize_camera(uint32_t width, uint32_t height) {
         }
     }
 
-    double fov_y_deg = 2.0 * std::atan(0.5 * intrinsics_.height / intrinsics_.fy) * 180.0 / std::numbers::pi;
-    intrinsics_.width = width_;
-    intrinsics_.height = height_;
-    intrinsics_.cx = width_ * 0.5;
-    intrinsics_.cy = height_ * 0.5;
-    double aspect = static_cast<double>(width_) / static_cast<double>(height_);
-    if (camera_) {
-        camera_->setProjection(fov_y_deg, aspect, intrinsics_.near_plane, intrinsics_.far_plane, filament::Camera::Fov::VERTICAL);
-    }
+    update_camera_projection();
 
     readback_scratch_.resize(width_ * height_ * 3, 0);
 }
 
 void FilamentRenderer::set_intrinsics(const CameraIntrinsics& intrinsics) {
+    sensor_intrinsics_ = intrinsics;
     intrinsics_ = intrinsics;
-    if (!camera_) return;
-
-    double fov_y_deg = 2.0 * std::atan(0.5 * intrinsics_.height / intrinsics_.fy) * 180.0 / std::numbers::pi;
-    double aspect = static_cast<double>(intrinsics_.width) / std::max(1.0, static_cast<double>(intrinsics_.height));
-
-    camera_->setProjection(fov_y_deg, aspect, intrinsics_.near_plane, intrinsics_.far_plane, filament::Camera::Fov::VERTICAL);
+    update_camera_projection();
 }
 
 void FilamentRenderer::set_camera_pose(const Eigen::Vector3d& position, const Eigen::Quaterniond& orientation) {
