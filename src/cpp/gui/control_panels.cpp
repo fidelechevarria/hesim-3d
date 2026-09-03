@@ -46,8 +46,22 @@ void GuiApp::render_header_bar() {
                 if (ImGui::MenuItem(ICON_MDI_KEY_PLUS " Capture Current Keyframe", "K")) {
                     capture_keyframe_at_current_time();
                 }
-                if (ImGui::MenuItem(ICON_MDI_TRASH_CAN_OUTLINE " Delete Selected Keyframe")) {
+                if (ImGui::MenuItem(ICON_MDI_SKIP_PREVIOUS " Previous Keyframe", "J")) {
+                    jump_to_prev_keyframe();
+                }
+                if (ImGui::MenuItem(ICON_MDI_SKIP_NEXT " Next Keyframe", "L")) {
+                    jump_to_next_keyframe();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(ICON_MDI_TRASH_CAN_OUTLINE " Delete Selected Keyframe", "Del", false, selected_keyframe_idx_ >= 0)) {
                     if (selected_keyframe_idx_ >= 0) delete_keyframe(selected_keyframe_idx_);
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(ICON_MDI_ARROW_EXPAND_HORIZONTAL " Fit Timeline to Keyframes", "F")) {
+                    frame_timeline_to_all_keyframes();
+                }
+                if (ImGui::MenuItem(ICON_MDI_FIT_TO_PAGE_OUTLINE " Reset Timeline Zoom")) {
+                    reset_timeline_view();
                 }
                 ImGui::EndMenu();
             }
@@ -275,15 +289,54 @@ void GuiApp::render_timeline_panel() {
 
     if (ImGui::Begin("##EarthStudioTimeline", nullptr, flags)) {
         // Toolbar inside timeline
-        if (ImGui::Button(ICON_MDI_KEY_PLUS " Capture Keyframe", ImVec2(170, 24))) {
+        if (ImGui::Button(ICON_MDI_KEY_PLUS " Capture", ImVec2(100, 24))) {
             capture_keyframe_at_current_time();
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture camera pose at current time (K)");
         ImGui::SameLine();
-        if (ImGui::Button(ICON_MDI_TRASH_CAN_OUTLINE " Delete", ImVec2(85, 24))) {
-            if (selected_keyframe_idx_ >= 0) delete_keyframe(selected_keyframe_idx_);
+
+        if (ImGui::Button(ICON_MDI_SKIP_PREVIOUS "##prevkf", ImVec2(28, 24))) {
+            jump_to_prev_keyframe();
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to previous keyframe (J)");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(150);
+
+        if (ImGui::Button(ICON_MDI_SKIP_NEXT "##nextkf", ImVec2(28, 24))) {
+            jump_to_next_keyframe();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to next keyframe (L)");
+        ImGui::SameLine();
+
+        bool can_delete = (selected_keyframe_idx_ >= 0 && selected_keyframe_idx_ < static_cast<int>(keyframes_.size()));
+        if (!can_delete) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_MDI_TRASH_CAN_OUTLINE " Delete", ImVec2(80, 24))) {
+            delete_keyframe(selected_keyframe_idx_);
+        }
+        if (!can_delete) ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete selected keyframe (Del / Backspace)");
+        ImGui::SameLine();
+
+        if (ImGui::Button(ICON_MDI_ARROW_EXPAND_HORIZONTAL " Fit", ImVec2(60, 24))) {
+            frame_timeline_to_all_keyframes();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit view to all keyframes (F)");
+        ImGui::SameLine();
+
+        if (ImGui::Button(ICON_MDI_FIT_TO_PAGE_OUTLINE " Reset", ImVec2(65, 24))) {
+            reset_timeline_view();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset view to full project duration");
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(65);
+        float dur_val = static_cast<float>(config_.duration_sec);
+        if (ImGui::DragFloat("##DurationSec", &dur_val, 0.1f, 0.5f, 600.0f, "%.1fs")) {
+            config_.duration_sec = std::max(0.5, static_cast<double>(dur_val));
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Total Project Duration (seconds)");
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(140);
         const char* interp_names[] = {ICON_MDI_VECTOR_CURVE " SE(3) Spline", ICON_MDI_VECTOR_LINE " Linear + Slerp"};
         int cur_interp = static_cast<int>(interp_mode_);
         if (ImGui::Combo("##Interp", &cur_interp, interp_names, 2)) {
@@ -291,25 +344,26 @@ void GuiApp::render_timeline_panel() {
             rebuild_trajectory();
         }
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(160);
+
+        ImGui::SetNextItemWidth(130);
         char file_buf[256];
         std::strncpy(file_buf, current_trajectory_file_.c_str(), sizeof(file_buf));
         if (ImGui::InputText("##TrajFile", file_buf, sizeof(file_buf))) {
             current_trajectory_file_ = file_buf;
         }
         ImGui::SameLine();
-        if (ImGui::Button(ICON_MDI_CONTENT_SAVE " Save", ImVec2(80, 24))) {
+        if (ImGui::Button(ICON_MDI_CONTENT_SAVE " Save", ImVec2(65, 24))) {
             save_trajectory_to_json(current_trajectory_file_);
         }
         ImGui::SameLine();
-        if (ImGui::Button(ICON_MDI_FOLDER_OPEN " Load", ImVec2(80, 24))) {
+        if (ImGui::Button(ICON_MDI_FOLDER_OPEN " Load", ImVec2(65, 24))) {
             load_trajectory_from_json(current_trajectory_file_);
         }
 
         ImGui::Separator();
 
         // Split Timeline into Left (Track Hierarchy) and Right (Ruler & Keyframe Lanes)
-        float left_track_w = 340.0f;
+        float left_track_w = 280.0f;
         float right_canvas_w = std::max(200.0f, total_w - left_track_w - 20.0f);
 
         // Left Track Controls Column
@@ -331,20 +385,14 @@ void GuiApp::render_timeline_panel() {
             float y_max = static_cast<float>(scene_bounds_.center.y() + r_pos * 5.0);
             const char* fmt = (r_pos < 10.0) ? "%.3f" : "%.1f";
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(140);
             if (ImGui::DragFloat("Longitude (X)", &x, step, x_min, x_max, fmt)) camera_pos_.x() = x;
-            ImGui::SameLine();
-            if (ImGui::SmallButton(ICON_MDI_PLUS "##kfx")) capture_keyframe_at_current_time();
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(140);
             if (ImGui::DragFloat("Latitude (Z)", &z, step, z_min, z_max, fmt)) camera_pos_.z() = z;
-            ImGui::SameLine();
-            if (ImGui::SmallButton(ICON_MDI_PLUS "##kfz")) capture_keyframe_at_current_time();
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(140);
             if (ImGui::DragFloat("Altitude (Y)", &y, step, y_min, y_max, fmt)) camera_pos_.y() = y;
-            ImGui::SameLine();
-            if (ImGui::SmallButton(ICON_MDI_PLUS "##kfy")) capture_keyframe_at_current_time();
 
             ImGui::TreePop();
         }
@@ -355,20 +403,14 @@ void GuiApp::render_timeline_panel() {
             float pitch = static_cast<float>(camera_pitch_deg_);
             float roll = static_cast<float>(camera_roll_deg_);
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(140);
             if (ImGui::DragFloat("Pan (Yaw)", &yaw, 0.5f, -180.0f, 180.0f, "%.1f deg")) camera_yaw_deg_ = yaw;
-            ImGui::SameLine();
-            if (ImGui::SmallButton(ICON_MDI_PLUS "##kfyaw")) capture_keyframe_at_current_time();
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(140);
             if (ImGui::DragFloat("Tilt (Pitch)", &pitch, 0.5f, -89.0f, 89.0f, "%.1f deg")) camera_pitch_deg_ = pitch;
-            ImGui::SameLine();
-            if (ImGui::SmallButton(ICON_MDI_PLUS "##kfpitch")) capture_keyframe_at_current_time();
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(140);
             if (ImGui::DragFloat("Roll", &roll, 0.5f, -180.0f, 180.0f, "%.1f deg")) camera_roll_deg_ = roll;
-            ImGui::SameLine();
-            if (ImGui::SmallButton(ICON_MDI_PLUS "##kfroll")) capture_keyframe_at_current_time();
 
             ImGui::TreePop();
         }
@@ -377,108 +419,313 @@ void GuiApp::render_timeline_panel() {
 
         ImGui::SameLine();
 
-        // Right Timeline Canvas Column (Ruler + Keyframe Diamonds + Playhead)
+        // Right Timeline Canvas Column (Overview + Ruler + Lanes + Playhead)
         ImGui::BeginChild("##TimelineCanvas", ImVec2(right_canvas_w, 0), true, ImGuiWindowFlags_NoScrollbar);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
         ImVec2 canvas_sz = ImGui::GetContentRegionAvail();
         ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y);
 
+        if (!timeline_view_initialized_) {
+            timeline_view_t_min_ = 0.0;
+            timeline_view_t_max_ = std::max(1.0, config_.duration_sec);
+            timeline_view_initialized_ = true;
+        }
+
+        double proj_dur = std::max(0.5, config_.duration_sec);
+        if (timeline_view_t_max_ <= timeline_view_t_min_ + 0.1) {
+            timeline_view_t_max_ = timeline_view_t_min_ + 1.0;
+        }
+
+        float overview_h = 16.0f;
         float ruler_h = 24.0f;
-        float total_time = static_cast<float>(std::max(0.5, config_.duration_sec));
-        int total_f = static_cast<int>(total_time * 30.0);
+        ImVec2 ov_p0 = canvas_p0;
+        ImVec2 ov_p1 = ImVec2(canvas_p1.x, canvas_p0.y + overview_h);
+        ImVec2 ruler_p0 = ImVec2(canvas_p0.x, canvas_p0.y + overview_h);
+        ImVec2 ruler_p1 = ImVec2(canvas_p1.x, ruler_p0.y + ruler_h);
 
-        // Draw Ruler Background
-        draw_list->AddRectFilled(canvas_p0, ImVec2(canvas_p1.x, canvas_p0.y + ruler_h), IM_COL32(35, 38, 44, 255));
-        draw_list->AddLine(ImVec2(canvas_p0.x, canvas_p0.y + ruler_h), ImVec2(canvas_p1.x, canvas_p0.y + ruler_h), IM_COL32(60, 65, 75, 255));
+        bool is_canvas_hovered = ImGui::IsWindowHovered();
 
-        // Draw Frame Ticks & Numbers (using monospace font)
-        int frame_step = (total_f > 300) ? 30 : 15;
-        for (int f = 0; f <= total_f; f += frame_step) {
-            float ratio = static_cast<float>(f) / static_cast<float>(total_f);
-            float tx = canvas_p0.x + ratio * (canvas_sz.x - 20.0f) + 10.0f;
-            draw_list->AddLine(ImVec2(tx, canvas_p0.y + ruler_h - 8.0f), ImVec2(tx, canvas_p0.y + ruler_h), IM_COL32(180, 180, 180, 200));
-            std::string f_str = std::to_string(f);
-            if (font_mono_) {
-                draw_list->AddText(font_mono_, 13.0f, ImVec2(tx + 3, canvas_p0.y + 4), IM_COL32(190, 195, 205, 255), f_str.c_str());
-            } else {
-                draw_list->AddText(ImVec2(tx + 2, canvas_p0.y + 2), IM_COL32(180, 180, 180, 255), f_str.c_str());
+        // Global hotkeys when timeline canvas is hovered
+        if (is_canvas_hovered) {
+            if (ImGui::IsKeyPressed(ImGuiKey_K)) {
+                capture_keyframe_at_current_time();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_J)) {
+                jump_to_prev_keyframe();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_L)) {
+                jump_to_next_keyframe();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F)) {
+                frame_timeline_to_all_keyframes();
+            }
+            if (selected_keyframe_idx_ >= 0 && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))) {
+                delete_keyframe(selected_keyframe_idx_);
             }
         }
 
-        // Draw Track Horizontal Grid Lanes
+        // --- 1. Draw Overview / Zoom Navigator Bar (Google Earth Studio style) ---
+        draw_list->AddRectFilled(ov_p0, ov_p1, IM_COL32(26, 28, 33, 255));
+        draw_list->AddLine(ImVec2(ov_p0.x, ov_p1.y), ImVec2(ov_p1.x, ov_p1.y), IM_COL32(45, 48, 55, 255));
+
+        // Draw keyframe ticks on overview bar
+        for (const auto& kf : keyframes_) {
+            float kf_norm = std::clamp(static_cast<float>(kf.time_sec / proj_dur), 0.0f, 1.0f);
+            float ov_kx = ov_p0.x + kf_norm * (canvas_sz.x - 20.0f) + 10.0f;
+            draw_list->AddLine(ImVec2(ov_kx, ov_p0.y + 2.0f), ImVec2(ov_kx, ov_p1.y - 2.0f), IM_COL32(230, 195, 40, 200), 1.5f);
+        }
+
+        // Highlight box for current view window
+        float v_norm0 = std::clamp(static_cast<float>(timeline_view_t_min_ / proj_dur), 0.0f, 1.0f);
+        float v_norm1 = std::clamp(static_cast<float>(timeline_view_t_max_ / proj_dur), 0.0f, 1.0f);
+        float ov_bx0 = ov_p0.x + v_norm0 * (canvas_sz.x - 20.0f) + 10.0f;
+        float ov_bx1 = ov_p0.x + v_norm1 * (canvas_sz.x - 20.0f) + 10.0f;
+        if (ov_bx1 < ov_bx0 + 12.0f) ov_bx1 = ov_bx0 + 12.0f;
+
+        draw_list->AddRectFilled(ImVec2(ov_bx0, ov_p0.y + 1.0f), ImVec2(ov_bx1, ov_p1.y - 1.0f), IM_COL32(0, 150, 215, 60), 2.0f);
+        draw_list->AddRect(ImVec2(ov_bx0, ov_p0.y + 1.0f), ImVec2(ov_bx1, ov_p1.y - 1.0f), IM_COL32(0, 190, 255, 200), 2.0f, 0, 1.5f);
+
+        // Interaction on Overview Bar
+        static bool s_dragging_overview = false;
+        bool mouse_in_overview = (mouse_pos.x >= ov_p0.x && mouse_pos.x <= ov_p1.x &&
+                                  mouse_pos.y >= ov_p0.y && mouse_pos.y <= ov_p1.y);
+
+        if (mouse_in_overview && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            reset_timeline_view();
+        } else if (mouse_in_overview && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            s_dragging_overview = true;
+        }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            s_dragging_overview = false;
+        }
+
+        if (s_dragging_overview) {
+            float mouse_norm = std::clamp((mouse_pos.x - (ov_p0.x + 10.0f)) / (canvas_sz.x - 20.0f), 0.0f, 1.0f);
+            double center_t = mouse_norm * proj_dur;
+            double cur_span = timeline_view_t_max_ - timeline_view_t_min_;
+            timeline_view_t_min_ = center_t - cur_span * 0.5;
+            timeline_view_t_max_ = timeline_view_t_min_ + cur_span;
+            if (timeline_view_t_min_ < -0.2) {
+                timeline_view_t_max_ += (-0.2 - timeline_view_t_min_);
+                timeline_view_t_min_ = -0.2;
+            }
+        }
+
+        // --- 2. Timeline Canvas Navigation (Mouse Wheel Zoom & Pan) ---
+        if (is_canvas_hovered && !s_dragging_overview && dragging_timeline_kf_idx_ < 0) {
+            float wheel = io.MouseWheel;
+            if (std::abs(wheel) > 0.01f) {
+                double mouse_t = timeline_canvas_x_to_time(mouse_pos.x, canvas_p0.x, canvas_sz.x);
+                double zoom = (wheel > 0.0f) ? 0.85 : 1.18;
+                double cur_span = timeline_view_t_max_ - timeline_view_t_min_;
+                double new_span = std::clamp(cur_span * zoom, 0.2, std::max(300.0, config_.duration_sec * 4.0));
+                double t_ratio = (mouse_t - timeline_view_t_min_) / cur_span;
+                timeline_view_t_min_ = mouse_t - t_ratio * new_span;
+                timeline_view_t_max_ = timeline_view_t_min_ + new_span;
+                if (timeline_view_t_min_ < -0.2) {
+                    timeline_view_t_max_ += (-0.2 - timeline_view_t_min_);
+                    timeline_view_t_min_ = -0.2;
+                }
+            }
+
+            // Pan with Middle Mouse Drag or Alt + Left Drag
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || (io.KeyAlt && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
+                float dx = io.MouseDelta.x;
+                double dt = -dx * (timeline_view_t_max_ - timeline_view_t_min_) / (canvas_sz.x - 20.0f);
+                timeline_view_t_min_ += dt;
+                timeline_view_t_max_ += dt;
+                if (timeline_view_t_min_ < -0.2) {
+                    timeline_view_t_max_ += (-0.2 - timeline_view_t_min_);
+                    timeline_view_t_min_ = -0.2;
+                }
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            }
+        }
+
+        // --- 3. Draw Ruler Background & Dynamic Adaptive Ticks ---
+        draw_list->AddRectFilled(ruler_p0, ruler_p1, IM_COL32(35, 38, 44, 255));
+        draw_list->AddLine(ImVec2(ruler_p0.x, ruler_p1.y), ruler_p1, IM_COL32(60, 65, 75, 255));
+
+        double view_span = timeline_view_t_max_ - timeline_view_t_min_;
+        int visible_frames = static_cast<int>(view_span * 30.0);
+
+        int tick_step = 1;
+        int label_step = 5;
+        if (visible_frames > 600) {
+            tick_step = 30; label_step = 90;
+        } else if (visible_frames > 250) {
+            tick_step = 15; label_step = 30;
+        } else if (visible_frames > 90) {
+            tick_step = 5; label_step = 15;
+        } else if (visible_frames > 40) {
+            tick_step = 2; label_step = 5;
+        } else {
+            tick_step = 1; label_step = 5;
+        }
+
+        int start_f = static_cast<int>(std::floor(timeline_view_t_min_ * 30.0));
+        start_f = (start_f / tick_step) * tick_step;
+        int end_f = static_cast<int>(std::ceil(timeline_view_t_max_ * 30.0)) + tick_step;
+
+        for (int f = start_f; f <= end_f; f += tick_step) {
+            if (f < 0) continue;
+            double t = static_cast<double>(f) / 30.0;
+            float tx = time_to_timeline_canvas_x(t, canvas_p0.x, canvas_sz.x);
+            if (tx < canvas_p0.x || tx > canvas_p1.x) continue;
+
+            bool is_major = (f % label_step == 0);
+            float tick_h = is_major ? 10.0f : 5.0f;
+            ImU32 tick_col = is_major ? IM_COL32(200, 205, 215, 240) : IM_COL32(110, 115, 125, 160);
+            draw_list->AddLine(ImVec2(tx, ruler_p1.y - tick_h), ImVec2(tx, ruler_p1.y), tick_col);
+
+            if (is_major) {
+                std::string f_str = std::to_string(f);
+                if (font_mono_) {
+                    draw_list->AddText(font_mono_, 12.0f, ImVec2(tx + 3, ruler_p0.y + 2), IM_COL32(190, 195, 205, 255), f_str.c_str());
+                } else {
+                    draw_list->AddText(ImVec2(tx + 2, ruler_p0.y + 2), IM_COL32(180, 180, 180, 255), f_str.c_str());
+                }
+            }
+        }
+
+        // --- 4. Draw Horizontal Grid Lanes ---
         float lane_step = 26.0f;
         for (int i = 0; i < 7; ++i) {
-            float ly = canvas_p0.y + ruler_h + (i + 1) * lane_step;
+            float ly = ruler_p1.y + (i + 1) * lane_step;
             draw_list->AddLine(ImVec2(canvas_p0.x, ly), ImVec2(canvas_p1.x, ly), IM_COL32(40, 44, 52, 180), 1.0f);
         }
 
         // Guidance message when no or only 1 keyframe exists
         if (keyframes_.empty()) {
-            std::string hint = ICON_MDI_INFORMATION_OUTLINE " Free Camera Mode | Navigate with mouse and press [K] or [+ Capture Keyframe] to define trajectory";
+            std::string hint = ICON_MDI_INFORMATION_OUTLINE " Free Camera Mode | Navigate with mouse and press [K] or [+ Capture] to define trajectory";
             ImVec2 txt_sz = ImGui::CalcTextSize(hint.c_str());
             float tx = canvas_p0.x + std::max(20.0f, (canvas_sz.x - txt_sz.x) * 0.5f);
-            float ty = canvas_p0.y + ruler_h + 45.0f;
+            float ty = ruler_p1.y + 45.0f;
             draw_list->AddText(ImVec2(tx, ty), IM_COL32(140, 175, 215, 220), hint.c_str());
         } else if (keyframes_.size() == 1) {
             std::string hint = ICON_MDI_ALERT_CIRCLE_OUTLINE " 1 keyframe set. Move camera and capture at least 1 more keyframe to generate SE(3) spline.";
             ImVec2 txt_sz = ImGui::CalcTextSize(hint.c_str());
             float tx = canvas_p0.x + std::max(20.0f, (canvas_sz.x - txt_sz.x) * 0.5f);
-            float ty = canvas_p0.y + ruler_h + 45.0f;
+            float ty = ruler_p1.y + 45.0f;
             draw_list->AddText(ImVec2(tx, ty), IM_COL32(240, 200, 90, 220), hint.c_str());
         }
 
-        // Draw Keyframe Diamonds on tracks
-        for (size_t k = 0; k < keyframes_.size(); ++k) {
-            float t_ratio = static_cast<float>(keyframes_[k].time_sec) / total_time;
-            float kx = canvas_p0.x + t_ratio * (canvas_sz.x - 20.0f) + 10.0f;
+        // --- 5. Draw Keyframe Diamonds & Interactive Dragging ---
+        int hovered_diamond_kf_idx = -1;
 
-            // Draw vertical diamond line
-            draw_list->AddLine(ImVec2(kx, canvas_p0.y + ruler_h), ImVec2(kx, canvas_p1.y), IM_COL32(90, 85, 40, 120), 1.0f);
+        for (size_t k = 0; k < keyframes_.size(); ++k) {
+            float kx = time_to_timeline_canvas_x(keyframes_[k].time_sec, canvas_p0.x, canvas_sz.x);
+
+            // Draw vertical guide line
+            if (kx >= canvas_p0.x && kx <= canvas_p1.x) {
+                draw_list->AddLine(ImVec2(kx, ruler_p1.y), ImVec2(kx, canvas_p1.y), IM_COL32(90, 85, 40, 120), 1.0f);
+            }
 
             for (int lane = 0; lane < 6; ++lane) {
-                float ky = canvas_p0.y + ruler_h + lane * lane_step + lane_step * 0.5f;
-                float dsz = (static_cast<int>(k) == selected_keyframe_idx_) ? 6.0f : 4.5f;
-                ImU32 dcol = (static_cast<int>(k) == selected_keyframe_idx_) ? IM_COL32(255, 235, 50, 255) : IM_COL32(220, 190, 40, 230);
+                float ky = ruler_p1.y + lane * lane_step + lane_step * 0.5f;
 
-                ImVec2 dt(kx, ky - dsz);
-                ImVec2 dr(kx + dsz, ky);
-                ImVec2 db(kx, ky + dsz);
-                ImVec2 dl(kx - dsz, ky);
+                bool is_selected = (static_cast<int>(k) == selected_keyframe_idx_);
+                bool is_hovered = (std::abs(mouse_pos.x - kx) < 8.0f && std::abs(mouse_pos.y - ky) < 8.0f);
 
-                draw_list->AddQuadFilled(dt, dr, db, dl, dcol);
-                draw_list->AddQuad(dt, dr, db, dl, IM_COL32(20, 20, 20, 255), 1.0f);
+                if (is_hovered) {
+                    hovered_diamond_kf_idx = static_cast<int>(k);
+                }
 
-                // Click detection on diamonds
-                ImVec2 mouse_pos = ImGui::GetIO().MousePos;
-                if (std::abs(mouse_pos.x - kx) < 8.0f && std::abs(mouse_pos.y - ky) < 8.0f) {
-                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                        jump_to_keyframe(static_cast<int>(k));
-                    }
+                if (kx >= canvas_p0.x - 10.0f && kx <= canvas_p1.x + 10.0f) {
+                    float dsz = is_selected ? 6.5f : (is_hovered ? 5.5f : 4.5f);
+                    ImU32 dcol = is_selected ? IM_COL32(255, 235, 50, 255)
+                                             : (is_hovered ? IM_COL32(255, 220, 90, 255) : IM_COL32(220, 190, 40, 230));
+
+                    ImVec2 dt(kx, ky - dsz);
+                    ImVec2 dr(kx + dsz, ky);
+                    ImVec2 db(kx, ky + dsz);
+                    ImVec2 dl(kx - dsz, ky);
+
+                    draw_list->AddQuadFilled(dt, dr, db, dl, dcol);
+                    draw_list->AddQuad(dt, dr, db, dl, IM_COL32(20, 20, 20, 255), 1.0f);
                 }
             }
         }
 
-        // Handle Playhead Scrubbing on Canvas
-        ImGui::InvisibleButton("##TimelineScrubArea", canvas_sz);
-        if (ImGui::IsItemActive() || (ImGui::IsItemHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
-            float mouse_x = ImGui::GetIO().MousePos.x;
-            float relative_x = mouse_x - (canvas_p0.x + 10.0f);
-            float ratio = std::clamp(relative_x / (canvas_sz.x - 20.0f), 0.0f, 1.0f);
-            current_time_sec_ = ratio * total_time;
-            apply_spline_sample_at(current_time_sec_);
+        // Diamond interactions: Click to select, Drag to move in time, Right-click context menu
+        if (is_canvas_hovered) {
+            if (hovered_diamond_kf_idx >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                selected_keyframe_idx_ = hovered_diamond_kf_idx;
+                ImGui::OpenPopup("##KeyframeContextMenu");
+            } else if (hovered_diamond_kf_idx >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyAlt) {
+                dragging_timeline_kf_idx_ = hovered_diamond_kf_idx;
+                selected_keyframe_idx_ = hovered_diamond_kf_idx;
+                jump_to_keyframe(hovered_diamond_kf_idx);
+            }
         }
 
-        // Draw Yellow Playhead Line
-        float playhead_ratio = static_cast<float>(current_time_sec_) / total_time;
-        float playhead_x = canvas_p0.x + playhead_ratio * (canvas_sz.x - 20.0f) + 10.0f;
+        // Active Keyframe Dragging
+        if (dragging_timeline_kf_idx_ >= 0 && dragging_timeline_kf_idx_ < static_cast<int>(keyframes_.size())) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                double target_t = timeline_canvas_x_to_time(mouse_pos.x, canvas_p0.x, canvas_sz.x);
+                if (!io.KeyShift) {
+                    target_t = std::round(target_t * 30.0) / 30.0; // snap to nearest frame
+                }
+                target_t = std::max(0.0, target_t);
+                keyframes_[dragging_timeline_kf_idx_].time_sec = target_t;
+                current_time_sec_ = target_t;
+                apply_spline_sample_at(current_time_sec_);
+            } else {
+                // Drag finished: re-sort keyframes and rebuild trajectory
+                double dragged_t = keyframes_[dragging_timeline_kf_idx_].time_sec;
+                std::sort(keyframes_.begin(), keyframes_.end(), [](const StudioKeyframe& a, const StudioKeyframe& b) {
+                    return a.time_sec < b.time_sec;
+                });
+                for (size_t i = 0; i < keyframes_.size(); ++i) {
+                    if (std::abs(keyframes_[i].time_sec - dragged_t) < 0.001) {
+                        selected_keyframe_idx_ = static_cast<int>(i);
+                        break;
+                    }
+                }
+                rebuild_trajectory();
+                dragging_timeline_kf_idx_ = -1;
+            }
+        }
 
-        draw_list->AddLine(ImVec2(playhead_x, canvas_p0.y), ImVec2(playhead_x, canvas_p1.y), IM_COL32(255, 220, 40, 255), 2.0f);
-        // Playhead handle on ruler
-        ImVec2 ph_top(playhead_x - 6.0f, canvas_p0.y);
-        ImVec2 ph_right(playhead_x + 6.0f, canvas_p0.y);
-        ImVec2 ph_bot(playhead_x, canvas_p0.y + ruler_h);
-        draw_list->AddTriangleFilled(ph_top, ph_right, ph_bot, IM_COL32(255, 220, 40, 255));
+        // Right-Click Context Menu Popup
+        if (ImGui::BeginPopup("##KeyframeContextMenu")) {
+            if (ImGui::MenuItem(ICON_MDI_TRASH_CAN_OUTLINE " Delete Keyframe", "Del")) {
+                if (selected_keyframe_idx_ >= 0) delete_keyframe(selected_keyframe_idx_);
+            }
+            if (ImGui::MenuItem(ICON_MDI_TARGET " Jump to Keyframe")) {
+                if (selected_keyframe_idx_ >= 0) jump_to_keyframe(selected_keyframe_idx_);
+            }
+            if (ImGui::MenuItem(ICON_MDI_CAMERA_RETAKE " Update with Current Camera Pose")) {
+                if (selected_keyframe_idx_ >= 0) update_keyframe_pose(selected_keyframe_idx_);
+            }
+            ImGui::EndPopup();
+        }
+
+        // --- 6. Playhead Scrubbing on Canvas ---
+        if (dragging_timeline_kf_idx_ < 0 && !s_dragging_overview && !ImGui::IsPopupOpen("##KeyframeContextMenu")) {
+            bool in_track_area = (mouse_pos.x >= canvas_p0.x && mouse_pos.x <= canvas_p1.x &&
+                                  mouse_pos.y >= ruler_p0.y && mouse_pos.y <= canvas_p1.y);
+
+            if (in_track_area && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !io.KeyAlt && hovered_diamond_kf_idx < 0) {
+                double t = timeline_canvas_x_to_time(mouse_pos.x, canvas_p0.x, canvas_sz.x);
+                current_time_sec_ = std::clamp(t, 0.0, config_.duration_sec);
+                apply_spline_sample_at(current_time_sec_);
+            }
+        }
+
+        // --- 7. Draw Yellow Playhead Line & Handle ---
+        float playhead_x = time_to_timeline_canvas_x(current_time_sec_, canvas_p0.x, canvas_sz.x);
+        if (playhead_x >= canvas_p0.x - 10.0f && playhead_x <= canvas_p1.x + 10.0f) {
+            draw_list->AddLine(ImVec2(playhead_x, ruler_p0.y), ImVec2(playhead_x, canvas_p1.y), IM_COL32(255, 220, 40, 255), 2.0f);
+
+            // Playhead triangle handle on ruler
+            ImVec2 ph_top(playhead_x - 6.0f, ruler_p0.y);
+            ImVec2 ph_right(playhead_x + 6.0f, ruler_p0.y);
+            ImVec2 ph_bot(playhead_x, ruler_p1.y);
+            draw_list->AddTriangleFilled(ph_top, ph_right, ph_bot, IM_COL32(255, 220, 40, 255));
+        }
 
         ImGui::EndChild();
     }

@@ -97,8 +97,12 @@ public:
     void capture_keyframe_at_current_time();
     void delete_keyframe(int index);
     void jump_to_keyframe(int index);
+    void jump_to_prev_keyframe();
+    void jump_to_next_keyframe();
     void update_keyframe_pose(int index);
     void rebuild_trajectory();
+    void frame_timeline_to_all_keyframes();
+    void reset_timeline_view();
     bool save_trajectory_to_json(const std::string& path);
     bool load_trajectory_from_json(const std::string& path);
 
@@ -180,6 +184,15 @@ private:
     float split_ratio_x_{0.5f};
     float split_ratio_y_{0.5f};
     float timeline_height_px_{280.0f};
+
+    // Timeline Viewport & Navigation (Zoom & Pan)
+    double timeline_view_t_min_{0.0};
+    double timeline_view_t_max_{5.0};
+    bool timeline_view_initialized_{false};
+    int dragging_timeline_kf_idx_{-1};
+
+    float time_to_timeline_canvas_x(double t, float canvas_x0, float canvas_w) const;
+    double timeline_canvas_x_to_time(float mouse_x, float canvas_x0, float canvas_w) const;
 
     // Orthographic View Transforms & Interaction
     Eigen::Vector2d ortho_pan_[3]{ {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0} }; // Top, Front, Side

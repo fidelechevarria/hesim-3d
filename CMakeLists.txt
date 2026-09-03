@@ -212,3 +212,10 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/hesim3d/libc++abi.so"
     DESTINATION hesim3d
 )
+
+add_custom_command(TARGET _hesim3d_core POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_hesim3d_core> "${CMAKE_CURRENT_SOURCE_DIR}/src/hesim3d/"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_SOURCE_DIR}/.venv/lib/python3.12/site-packages/hesim3d/"
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_hesim3d_core> "${CMAKE_CURRENT_SOURCE_DIR}/.venv/lib/python3.12/site-packages/hesim3d/"
+    COMMENT "Auto-syncing _hesim3d_core to src/hesim3d/ and .venv site-packages"
+)

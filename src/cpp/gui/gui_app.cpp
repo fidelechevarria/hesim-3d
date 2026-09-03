@@ -171,6 +171,68 @@ void GuiApp::jump_to_keyframe(int index) {
     }
 }
 
+void GuiApp::jump_to_prev_keyframe() {
+    if (keyframes_.empty()) return;
+    int target_idx = -1;
+    for (int i = static_cast<int>(keyframes_.size()) - 1; i >= 0; --i) {
+        if (keyframes_[i].time_sec < current_time_sec_ - 0.02) {
+            target_idx = i;
+            break;
+        }
+    }
+    if (target_idx >= 0) {
+        jump_to_keyframe(target_idx);
+    } else {
+        jump_to_keyframe(0);
+    }
+}
+
+void GuiApp::jump_to_next_keyframe() {
+    if (keyframes_.empty()) return;
+    int target_idx = -1;
+    for (size_t i = 0; i < keyframes_.size(); ++i) {
+        if (keyframes_[i].time_sec > current_time_sec_ + 0.02) {
+            target_idx = static_cast<int>(i);
+            break;
+        }
+    }
+    if (target_idx >= 0) {
+        jump_to_keyframe(target_idx);
+    } else {
+        jump_to_keyframe(static_cast<int>(keyframes_.size()) - 1);
+    }
+}
+
+void GuiApp::frame_timeline_to_all_keyframes() {
+    if (keyframes_.empty()) {
+        reset_timeline_view();
+        return;
+    }
+    double kf_start = keyframes_.front().time_sec;
+    double kf_end = keyframes_.back().time_sec;
+    double span = std::max(0.5, kf_end - kf_start);
+    double margin = std::max(0.2, span * 0.15);
+    timeline_view_t_min_ = std::max(0.0, kf_start - margin);
+    timeline_view_t_max_ = kf_end + margin;
+}
+
+void GuiApp::reset_timeline_view() {
+    timeline_view_t_min_ = 0.0;
+    timeline_view_t_max_ = std::max(1.0, config_.duration_sec);
+}
+
+float GuiApp::time_to_timeline_canvas_x(double t, float canvas_x0, float canvas_w) const {
+    double range = std::max(0.01, timeline_view_t_max_ - timeline_view_t_min_);
+    double norm = (t - timeline_view_t_min_) / range;
+    return canvas_x0 + static_cast<float>(norm * (canvas_w - 20.0f)) + 10.0f;
+}
+
+double GuiApp::timeline_canvas_x_to_time(float mouse_x, float canvas_x0, float canvas_w) const {
+    double range = std::max(0.01, timeline_view_t_max_ - timeline_view_t_min_);
+    double norm = static_cast<double>(mouse_x - (canvas_x0 + 10.0f)) / static_cast<double>(canvas_w - 20.0f);
+    return timeline_view_t_min_ + norm * range;
+}
+
 void GuiApp::update_keyframe_pose(int index) {
     if (index >= 0 && index < static_cast<int>(keyframes_.size())) {
         keyframes_[index].position = camera_pos_;
@@ -181,7 +243,19 @@ void GuiApp::update_keyframe_pose(int index) {
 }
 
 void GuiApp::rebuild_trajectory() {
-    if (keyframes_.size() < 2) return;
+    if (keyframes_.size() < 2) {
+        path_samples_.clear();
+        return;
+    }
+
+    std::sort(keyframes_.begin(), keyframes_.end(), [](const StudioKeyframe& a, const StudioKeyframe& b) {
+        return a.time_sec < b.time_sec;
+    });
+
+    // Automatically expand project duration if a keyframe is placed or dragged beyond it
+    if (!keyframes_.empty() && keyframes_.back().time_sec > config_.duration_sec) {
+        config_.duration_sec = std::ceil(keyframes_.back().time_sec * 10.0) / 10.0;
+    }
 
     std::vector<Eigen::Vector3d> positions;
     std::vector<Eigen::Quaterniond> orientations;
@@ -195,7 +269,6 @@ void GuiApp::rebuild_trajectory() {
 
     double total_dur = keyframes_.back().time_sec - keyframes_.front().time_sec;
     if (total_dur <= 0.01) total_dur = config_.duration_sec;
-    config_.duration_sec = total_dur;
 
     try {
         spline_.build_from_waypoints(positions, orientations, total_dur);
@@ -206,11 +279,24 @@ void GuiApp::rebuild_trajectory() {
     // Cache dense path points for 2D/3D visualization
     path_samples_.clear();
     int num_samples = 120;
-    double t_step = total_dur / static_cast<double>(num_samples);
+    double t_start = keyframes_.front().time_sec;
+    double t_end = keyframes_.back().time_sec;
+    double t_step = (t_end - t_start) / static_cast<double>(num_samples);
     for (int i = 0; i <= num_samples; ++i) {
-        double t = i * t_step;
-        TrajectorySample s = spline_.evaluate(t);
-        path_samples_.push_back(s.position);
+        double t = t_start + i * t_step;
+        if (interp_mode_ == TrajectoryInterpolation::LINEAR_SLERP) {
+            for (size_t k = 0; k + 1 < keyframes_.size(); ++k) {
+                if (t >= keyframes_[k].time_sec && (t <= keyframes_[k + 1].time_sec || k + 2 == keyframes_.size())) {
+                    double dt = keyframes_[k + 1].time_sec - keyframes_[k].time_sec;
+                    double a = (dt > 1e-6) ? std::clamp((t - keyframes_[k].time_sec) / dt, 0.0, 1.0) : 0.0;
+                    path_samples_.push_back((1.0 - a) * keyframes_[k].position + a * keyframes_[k + 1].position);
+                    break;
+                }
+            }
+        } else {
+            TrajectorySample s = spline_.evaluate(t - t_start);
+            path_samples_.push_back(s.position);
+        }
     }
 }
 
@@ -309,13 +395,58 @@ bool GuiApp::load_trajectory_from_json(const std::string& path) {
 }
 
 void GuiApp::apply_spline_sample_at(double t) {
-    if (keyframes_.size() < 2) return;
-    TrajectorySample sample = spline_.evaluate(t);
-    camera_pos_ = sample.position;
-    Eigen::Vector3d euler = quat_to_euler_deg(sample.orientation);
-    camera_yaw_deg_ = euler.x();
-    camera_pitch_deg_ = euler.y();
-    camera_roll_deg_ = euler.z();
+    if (keyframes_.empty()) return;
+    if (keyframes_.size() == 1) {
+        camera_pos_ = keyframes_[0].position;
+        camera_yaw_deg_ = keyframes_[0].rotation_euler_deg.x();
+        camera_pitch_deg_ = keyframes_[0].rotation_euler_deg.y();
+        camera_roll_deg_ = keyframes_[0].rotation_euler_deg.z();
+        return;
+    }
+
+    if (t <= keyframes_.front().time_sec) {
+        const auto& kf = keyframes_.front();
+        camera_pos_ = kf.position;
+        camera_yaw_deg_ = kf.rotation_euler_deg.x();
+        camera_pitch_deg_ = kf.rotation_euler_deg.y();
+        camera_roll_deg_ = kf.rotation_euler_deg.z();
+        return;
+    }
+
+    if (t >= keyframes_.back().time_sec) {
+        const auto& kf = keyframes_.back();
+        camera_pos_ = kf.position;
+        camera_yaw_deg_ = kf.rotation_euler_deg.x();
+        camera_pitch_deg_ = kf.rotation_euler_deg.y();
+        camera_roll_deg_ = kf.rotation_euler_deg.z();
+        return;
+    }
+
+    if (interp_mode_ == TrajectoryInterpolation::LINEAR_SLERP) {
+        for (size_t i = 0; i + 1 < keyframes_.size(); ++i) {
+            if (t >= keyframes_[i].time_sec && t <= keyframes_[i + 1].time_sec) {
+                double dt = keyframes_[i + 1].time_sec - keyframes_[i].time_sec;
+                double alpha = (dt > 1e-6) ? (t - keyframes_[i].time_sec) / dt : 0.0;
+                alpha = std::clamp(alpha, 0.0, 1.0);
+
+                camera_pos_ = (1.0 - alpha) * keyframes_[i].position + alpha * keyframes_[i + 1].position;
+                Eigen::Quaterniond q = keyframes_[i].orientation.slerp(alpha, keyframes_[i + 1].orientation);
+                Eigen::Vector3d euler = quat_to_euler_deg(q);
+                camera_yaw_deg_ = euler.x();
+                camera_pitch_deg_ = euler.y();
+                camera_roll_deg_ = euler.z();
+                return;
+            }
+        }
+    } else {
+        double spline_t = t - keyframes_.front().time_sec;
+        TrajectorySample sample = spline_.evaluate(spline_t);
+        camera_pos_ = sample.position;
+        Eigen::Vector3d euler = quat_to_euler_deg(sample.orientation);
+        camera_yaw_deg_ = euler.x();
+        camera_pitch_deg_ = euler.y();
+        camera_roll_deg_ = euler.z();
+    }
 }
 
 void GuiApp::compute_camera_pose(Eigen::Vector3d& out_pos, Eigen::Quaterniond& out_ori) {
