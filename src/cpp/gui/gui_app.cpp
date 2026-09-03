@@ -789,6 +789,8 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     float canvas_h = max_y - min_y;
     if (canvas_w < 10.0f || canvas_h < 10.0f) return;
 
+    draw_list->PushClipRect(ImVec2(min_x, min_y), ImVec2(max_x, max_y), true);
+
     // Detect viewport size changes
     float thresh = (layout_settle_frames_ > 0) ? 0.5f : 4.0f;
     if (std::abs(canvas_w - last_canvas_w_[ortho_idx]) > thresh ||
@@ -1151,6 +1153,7 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
         draw_list->AddRectFilled(ImVec2(cam_screen.x + 14, cam_screen.y - 20), ImVec2(cam_screen.x + 20 + txt_sz.x, cam_screen.y - 2), IM_COL32(15, 18, 25, 220), 4.0f);
         draw_list->AddText(ImVec2(cam_screen.x + 17, cam_screen.y - 18), IM_COL32(0, 220, 255, 255), buf);
     }
+    draw_list->PopClipRect();
 }
 
 bool GuiApp::init() {
@@ -1791,9 +1794,9 @@ void GuiApp::render_ui() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    render_header_bar();
     render_multi_viewport_grid();
     render_timeline_panel();
+    render_header_bar();
     render_simulation_progress_modal();
 
     ImGui::Render();

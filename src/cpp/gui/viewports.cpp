@@ -231,6 +231,7 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
                 ImGui::Image((ImTextureID)(intptr_t)tex_id, draw_size);
 
                 // Draw central target reticle
+                draw_list->PushClipRect(canvas_p0, canvas_p1, true);
                 float cx = img_p0.x + draw_size.x * 0.5f;
                 float cy = img_p0.y + draw_size.y * 0.5f;
                 draw_list->AddCircle(ImVec2(cx, cy), 14.0f, IM_COL32(95, 120, 240, 180), 16, 1.5f);
@@ -238,6 +239,7 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
                 draw_list->AddLine(ImVec2(cx + 5, cy), ImVec2(cx + 20, cy), IM_COL32(95, 120, 240, 180), 1.5f);
                 draw_list->AddLine(ImVec2(cx, cy - 20), ImVec2(cx, cy - 5), IM_COL32(95, 120, 240, 180), 1.5f);
                 draw_list->AddLine(ImVec2(cx, cy + 5), ImVec2(cx, cy + 20), IM_COL32(95, 120, 240, 180), 1.5f);
+                draw_list->PopClipRect();
             }
         };
 
