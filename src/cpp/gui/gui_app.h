@@ -136,6 +136,9 @@ private:
     double camera_roll_deg_{0.0};   // Roll / Bank (deg)
     Eigen::Vector3d camera_target_{0.0, 0.0, 0.0};
     double orbit_radius_{3.0};
+    float smooth_orbit_dx_{0.0f};
+    float smooth_orbit_dy_{0.0f};
+    bool is_orbit_dragging_{false};
 
     // Multi-View & Workflow Mode Configuration
     AppMode current_mode_{AppMode::TRAJECTORY_STUDIO};

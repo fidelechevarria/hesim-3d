@@ -332,6 +332,17 @@ void GuiApp::compute_optimal_initial_camera() {
     Eigen::Vector3d center = scene_bounds_.valid ? scene_bounds_.center : Eigen::Vector3d(0.0, 0.0, 0.0);
     double r = scene_bounds_.valid ? scene_bounds_.radius : 2.0;
 
+    if (!keyframes_.empty()) {
+        Eigen::Vector3d kf_min = center - Eigen::Vector3d(r, r, r);
+        Eigen::Vector3d kf_max = center + Eigen::Vector3d(r, r, r);
+        for (const auto& kf : keyframes_) {
+            kf_min = kf_min.cwiseMin(kf.position);
+            kf_max = kf_max.cwiseMax(kf.position);
+        }
+        center = (kf_min + kf_max) * 0.5;
+        r = std::max(r, (kf_max - center).norm());
+    }
+
     // Google Earth Studio aesthetic elevated isometric framing
     camera_target_ = center;
     camera_yaw_deg_ = 25.0;
@@ -371,7 +382,21 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
     bool is_hovered = (mouse_pos.x >= min_x && mouse_pos.x <= max_x &&
                        mouse_pos.y >= min_y && mouse_pos.y <= max_y);
 
-    if (!is_hovered) return;
+    // 0. Reset / Frame Camera View on 'F' key
+    if (is_hovered && ImGui::IsKeyPressed(ImGuiKey_F)) {
+        compute_optimal_initial_camera();
+        return;
+    }
+
+    bool is_orbit_down = ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyAlt);
+
+    // Allow continuous orbit dragging even if cursor briefly crosses the viewport edge
+    if (!is_hovered && !is_orbit_dragging_) {
+        is_orbit_dragging_ = false;
+        smooth_orbit_dx_ = 0.0f;
+        smooth_orbit_dy_ = 0.0f;
+        return;
+    }
 
     Eigen::Quaterniond q = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
     Eigen::Matrix3d R = q.toRotationMatrix();
@@ -386,7 +411,7 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
     float dolly_speed = std::max(0.0002f, base_speed * 1.5f);
 
     // 1. Left-Click + Drag: Horizontal Plane Pan (moves X/Z, keeps altitude Y constant)
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !io.KeyShift && !io.KeyCtrl) {
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !io.KeyShift && !io.KeyCtrl && !io.KeyAlt) {
         Eigen::Vector3d fwd_xz(look_dir.x(), 0.0, look_dir.z());
         if (fwd_xz.norm() > 1e-4) fwd_xz.normalize();
 
@@ -402,21 +427,42 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
         camera_pos_ += look_dir * (-io.MouseDelta.y) * dolly_speed;
     }
 
-    // 3. Middle-Click + Drag: Orbit / Look Rotation (Pitch & Yaw around target)
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyAlt)) {
-        camera_yaw_deg_ -= io.MouseDelta.x * 0.35;
-        camera_pitch_deg_ += io.MouseDelta.y * 0.35;
+    // 3. Middle-Click + Drag: Orbit / Look Rotation (Smooth Pitch & Yaw around target)
+    if (is_orbit_down) {
+        if (!is_orbit_dragging_) {
+            is_orbit_dragging_ = true;
+            smooth_orbit_dx_ = io.MouseDelta.x;
+            smooth_orbit_dy_ = io.MouseDelta.y;
+        } else {
+            // Low-pass exponential smoothing filter on mouse delta to eliminate discrete polling jumps
+            const float alpha = 0.50f;
+            smooth_orbit_dx_ = smooth_orbit_dx_ * (1.0f - alpha) + io.MouseDelta.x * alpha;
+            smooth_orbit_dy_ = smooth_orbit_dy_ * (1.0f - alpha) + io.MouseDelta.y * alpha;
+        }
+
+        float orbit_speed = 0.085f * std::max(0.05f, nav_speed_factor_);
+        camera_yaw_deg_ -= smooth_orbit_dx_ * orbit_speed;
+        camera_pitch_deg_ += smooth_orbit_dy_ * orbit_speed;
         camera_pitch_deg_ = std::clamp(camera_pitch_deg_, -89.0, 89.0);
+
+        // Keep camera_target_ synchronized along look direction
+        Eigen::Quaterniond q_new = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
+        Eigen::Vector3d new_look_dir = q_new.toRotationMatrix() * Eigen::Vector3d(0, 0, -1);
+        camera_target_ = camera_pos_ + new_look_dir * orbit_radius_;
+    } else {
+        is_orbit_dragging_ = false;
+        smooth_orbit_dx_ = 0.0f;
+        smooth_orbit_dy_ = 0.0f;
     }
 
     // 4. Mouse Wheel: Fast Dolly
-    if (io.MouseWheel != 0.0f) {
+    if (is_hovered && io.MouseWheel != 0.0f) {
         camera_pos_ += look_dir * io.MouseWheel * (pan_speed * 15.0f);
     }
 
     // 5. Roll Keys (Q / E)
-    if (ImGui::IsKeyDown(ImGuiKey_Q)) camera_roll_deg_ += 0.8;
-    if (ImGui::IsKeyDown(ImGuiKey_E)) camera_roll_deg_ -= 0.8;
+    if (is_hovered && ImGui::IsKeyDown(ImGuiKey_Q)) camera_roll_deg_ += 0.8;
+    if (is_hovered && ImGui::IsKeyDown(ImGuiKey_E)) camera_roll_deg_ -= 0.8;
 }
 
 void GuiApp::update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h) {
@@ -460,36 +506,90 @@ void GuiApp::update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h)
 void GuiApp::frame_ortho_view(int ortho_idx) {
     if (ortho_idx < 0 || ortho_idx > 2) return;
 
-    Eigen::Vector3d center = scene_bounds_.valid ? scene_bounds_.center : Eigen::Vector3d(0.0, 0.0, 0.0);
-    if (!keyframes_.empty()) {
-        center.setZero();
-        for (const auto& kf : keyframes_) {
-            center += kf.position;
-        }
-        center /= static_cast<double>(keyframes_.size());
+    Eigen::Vector3d min_pt(1e9, 1e9, 1e9);
+    Eigen::Vector3d max_pt(-1e9, -1e9, -1e9);
+
+    // 1. Include scene bounding box if valid
+    if (scene_bounds_.valid) {
+        min_pt = min_pt.cwiseMin(scene_bounds_.min_point);
+        max_pt = max_pt.cwiseMax(scene_bounds_.max_point);
+    }
+
+    // 2. Include all keyframes
+    for (const auto& kf : keyframes_) {
+        min_pt = min_pt.cwiseMin(kf.position);
+        max_pt = max_pt.cwiseMax(kf.position);
+    }
+
+    // 3. Include camera position and target
+    min_pt = min_pt.cwiseMin(camera_pos_);
+    max_pt = max_pt.cwiseMax(camera_pos_);
+    min_pt = min_pt.cwiseMin(camera_target_);
+    max_pt = max_pt.cwiseMax(camera_target_);
+
+    // 4. Include camera frustum corners in world space
+    Eigen::Quaterniond q = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
+    Eigen::Matrix3d R = q.toRotationMatrix();
+    Eigen::Vector3d look_dir = R * Eigen::Vector3d(0, 0, -1);
+    Eigen::Vector3d right_dir = R * Eigen::Vector3d(1, 0, 0);
+    Eigen::Vector3d up_dir = R * Eigen::Vector3d(0, 1, 0);
+
+    float aspect_ratio = static_cast<float>(sensor_tex_w_) / std::max(1.0f, static_cast<float>(sensor_tex_h_));
+    double tan_fov_y_half = 0.60;
+    double tan_fov_x_half = tan_fov_y_half * aspect_ratio;
+
+    double f_dist = std::max({orbit_radius_, (camera_pos_ - camera_target_).norm(), 1.0});
+    double fw = f_dist * tan_fov_x_half;
+    double fh = f_dist * tan_fov_y_half;
+    Eigen::Vector3d far_center = camera_pos_ + look_dir * f_dist;
+
+    Eigen::Vector3d frustum_pts[4] = {
+        far_center - right_dir * fw + up_dir * fh,
+        far_center + right_dir * fw + up_dir * fh,
+        far_center + right_dir * fw - up_dir * fh,
+        far_center - right_dir * fw - up_dir * fh
+    };
+
+    for (const auto& pt : frustum_pts) {
+        min_pt = min_pt.cwiseMin(pt);
+        max_pt = max_pt.cwiseMax(pt);
+    }
+
+    // Fallback if no geometry was bounded
+    if (min_pt.x() > max_pt.x()) {
+        min_pt = camera_pos_ - Eigen::Vector3d(1.5, 1.5, 1.5);
+        max_pt = camera_pos_ + Eigen::Vector3d(1.5, 1.5, 1.5);
     }
 
     double cw = (last_canvas_w_[ortho_idx] > 50.0f) ? last_canvas_w_[ortho_idx] : 450.0;
     double ch = (last_canvas_h_[ortho_idx] > 50.0f) ? last_canvas_h_[ortho_idx] : 350.0;
-    double canvas_fit = std::min(cw, ch) * 0.78;
 
-    double default_scale = 1.0;
+    double center_u = 0.0, center_v = 0.0;
+    double span_u = 1.0, span_v = 1.0;
+
     if (ortho_idx == 0) { // Top view (X-Z)
-        double span = std::max({scene_bounds_.extent.x(), scene_bounds_.extent.z(), 0.05});
-        default_scale = canvas_fit / span;
-        ortho_pan_[0] = Eigen::Vector2d(center.x(), center.z());
-        ortho_scale_[0] = std::clamp(default_scale, 0.0001, 20000.0);
+        center_u = (min_pt.x() + max_pt.x()) * 0.5;
+        center_v = (min_pt.z() + max_pt.z()) * 0.5;
+        span_u = std::max(max_pt.x() - min_pt.x(), 0.1);
+        span_v = std::max(max_pt.z() - min_pt.z(), 0.1);
     } else if (ortho_idx == 1) { // Front view (X-Y)
-        double span = std::max({scene_bounds_.extent.x(), scene_bounds_.extent.y(), 0.05});
-        default_scale = canvas_fit / span;
-        ortho_pan_[1] = Eigen::Vector2d(center.x(), center.y());
-        ortho_scale_[1] = std::clamp(default_scale, 0.0001, 20000.0);
+        center_u = (min_pt.x() + max_pt.x()) * 0.5;
+        center_v = (min_pt.y() + max_pt.y()) * 0.5;
+        span_u = std::max(max_pt.x() - min_pt.x(), 0.1);
+        span_v = std::max(max_pt.y() - min_pt.y(), 0.1);
     } else { // Side view (Z-Y)
-        double span = std::max({scene_bounds_.extent.z(), scene_bounds_.extent.y(), 0.05});
-        default_scale = canvas_fit / span;
-        ortho_pan_[2] = Eigen::Vector2d(center.z(), center.y());
-        ortho_scale_[2] = std::clamp(default_scale, 0.0001, 20000.0);
+        center_u = (min_pt.z() + max_pt.z()) * 0.5;
+        center_v = (min_pt.y() + max_pt.y()) * 0.5;
+        span_u = std::max(max_pt.z() - min_pt.z(), 0.1);
+        span_v = std::max(max_pt.y() - min_pt.y(), 0.1);
     }
+
+    double scale_u = (cw * 0.78) / span_u;
+    double scale_v = (ch * 0.78) / span_v;
+    double fit_scale = std::min(scale_u, scale_v);
+
+    ortho_pan_[ortho_idx] = Eigen::Vector2d(center_u, center_v);
+    ortho_scale_[ortho_idx] = std::clamp(fit_scale, 0.0001, 20000.0);
     ortho_dirty_[ortho_idx] = true;
 }
 

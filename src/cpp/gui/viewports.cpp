@@ -159,6 +159,10 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
 
         ImGui::SameLine();
         if (viewport_views_[quad_idx] == ViewportContent::CAMERA_CLEAN) {
+            std::string btn_id = ICON_MDI_FIT_TO_SCREEN " Frame##cam" + std::to_string(quad_idx);
+            if (ImGui::SmallButton(btn_id.c_str())) compute_optimal_initial_camera();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset camera view to initial framing (Shortcut: 'F')");
+            ImGui::SameLine();
             if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
                 ImGui::TextColored(ImVec4(0.45f, 0.85f, 1.0f, 1.0f), ICON_MDI_AXIS_ARROW " [Look-Through | Left: Pan | Right: Dolly | Mid: Orbit | Q/E: Roll]");
             } else {
@@ -173,6 +177,7 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
             ImGui::SameLine();
             std::string btn_id = ICON_MDI_FIT_TO_SCREEN " Frame##top" + std::to_string(quad_idx);
             if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(0);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame scene, camera and frustum (Shortcut: 'F')");
             ImGui::SameLine();
             ImGui::TextDisabled("| Pan: Drag | Zoom: Wheel | Edit: Drag KF");
         } else if (viewport_views_[quad_idx] == ViewportContent::SIDE_ORTHO) {
@@ -180,6 +185,7 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
             ImGui::SameLine();
             std::string btn_id = ICON_MDI_FIT_TO_SCREEN " Frame##side" + std::to_string(quad_idx);
             if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame scene, camera and frustum (Shortcut: 'F')");
             ImGui::SameLine();
             ImGui::TextDisabled("| Pan: Drag | Zoom: Wheel | Edit: Drag KF");
         } else if (viewport_views_[quad_idx] == ViewportContent::FRONT_ORTHO) {
@@ -187,6 +193,7 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
             ImGui::SameLine();
             std::string btn_id = ICON_MDI_FIT_TO_SCREEN " Frame##front" + std::to_string(quad_idx);
             if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(1);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame scene, camera and frustum (Shortcut: 'F')");
             ImGui::SameLine();
             ImGui::TextDisabled("| Pan: Drag | Zoom: Wheel | Edit: Drag KF");
         } else if (viewport_views_[quad_idx] == ViewportContent::IMU_TELEMETRY) {
