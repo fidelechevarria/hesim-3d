@@ -12,15 +12,19 @@ namespace hesim3d {
 
 void GuiApp::render_header_bar() {
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    float bar_h = 42.0f;
+    float bar_h = 30.0f;
 
     ImGui::SetNextWindowPos(vp->Pos);
     ImGui::SetNextWindowSize(ImVec2(vp->Size.x, bar_h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                             ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_MenuBar |
                             ImGuiWindowFlags_NoSavedSettings;
 
-    if (ImGui::Begin("##HeaderBar", nullptr, flags)) {
+    bool open = ImGui::Begin("##HeaderBar", nullptr, flags);
+    ImGui::PopStyleVar();
+
+    if (open) {
         if (ImGui::BeginMenuBar()) {
             // 1. File Menu
             if (ImGui::BeginMenu("File")) {

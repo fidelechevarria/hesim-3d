@@ -12,8 +12,8 @@ void GuiApp::render_multi_viewport_grid() {
     float total_w = vp->Size.x;
     float total_h = vp->Size.y;
 
-    float header_h = 42.0f;
-    float upper_h = total_h - header_h - timeline_height_px_ - 4.0f;
+    float header_h = 30.0f;
+    float upper_h = total_h - header_h - timeline_height_px_;
     float upper_y = header_h;
 
     float split_x = total_w * split_ratio_x_;
@@ -133,10 +133,16 @@ void GuiApp::render_multi_viewport_grid() {
 }
 
 void GuiApp::render_single_viewport(int quad_idx, const std::string& name, ViewportContent content) {
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize |
+                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     std::string win_id = "##ViewportWindow_" + std::to_string(quad_idx);
 
-    if (ImGui::Begin(win_id.c_str(), nullptr, flags)) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
+    bool open = ImGui::Begin(win_id.c_str(), nullptr, flags);
+    ImGui::PopStyleVar();
+
+    if (open) {
         // Top Toolbar inside each Viewport
         const char* view_names[] = {
             ICON_MDI_CAMERA " Camera (Clean Look-Through)",
