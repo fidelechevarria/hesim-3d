@@ -68,7 +68,7 @@ void GuiApp::render_multi_viewport_grid() {
     if (active_layout_ == MultiViewLayout::VIEW_1_SINGLE) {
         ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(total_w, upper_h), ImGuiCond_Always);
-        render_single_viewport(0, "Main Viewport (Maximized)", viewport_views_[1]);
+        render_single_viewport(0, "Main Viewport (Maximized)", viewport_views_[0]);
     } else if (active_layout_ == MultiViewLayout::VIEW_2_SPLIT) {
         // Left Column (Full height)
         ImGui::SetNextWindowPos(ImVec2(0, upper_y), ImGuiCond_Always);
@@ -126,6 +126,10 @@ void GuiApp::render_multi_viewport_grid() {
         ImU32 row_c = s_dragging_row ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
         fg->AddLine(ImVec2(0, upper_y + split_y), ImVec2(total_w, upper_y + split_y), row_c, s_dragging_row ? 3.0f : 2.0f);
     }
+
+    if (layout_settle_frames_ > 0) {
+        --layout_settle_frames_;
+    }
 }
 
 void GuiApp::render_single_viewport(int quad_idx, const std::string& name, ViewportContent content) {
@@ -150,6 +154,7 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
         std::string combo_id = "##ViewCombo_" + std::to_string(quad_idx);
         if (ImGui::Combo(combo_id.c_str(), &cur_view, view_names, 8)) {
             viewport_views_[quad_idx] = static_cast<ViewportContent>(cur_view);
+            reset_viewport_resolutions();
         }
 
         ImGui::SameLine();
@@ -235,8 +240,9 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
                     uint32_t tw = (static_cast<uint32_t>(draw_w) + 3) & ~3u;
                     uint32_t th = (static_cast<uint32_t>(draw_h) + 1) & ~1u;
 
-                    if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > 8 ||
-                        std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > 8) {
+                    int thresh = (layout_settle_frames_ > 0) ? 0 : 8;
+                    if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > thresh ||
+                        std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > thresh) {
                         resize_camera_render(tw, th);
                     }
                 }
@@ -249,9 +255,25 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
                 render_aspect_image(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_);
                 break;
 
-            case ViewportContent::EVS_ACCUMULATION:
+            case ViewportContent::EVS_ACCUMULATION: {
+                if (avail_sz.x > 10.0f && avail_sz.y > 10.0f) {
+                    float tex_aspect = static_cast<float>(sensor_tex_w_) / static_cast<float>(sensor_tex_h_);
+                    float avail_aspect = avail_sz.x / avail_sz.y;
+                    float draw_w = (avail_aspect > tex_aspect) ? (avail_sz.y * tex_aspect) : avail_sz.x;
+                    float draw_h = (avail_aspect > tex_aspect) ? avail_sz.y : (avail_sz.x / tex_aspect);
+
+                    uint32_t tw = (static_cast<uint32_t>(draw_w) + 3) & ~3u;
+                    uint32_t th = (static_cast<uint32_t>(draw_h) + 1) & ~1u;
+
+                    int thresh = (layout_settle_frames_ > 0) ? 0 : 8;
+                    if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > thresh ||
+                        std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > thresh) {
+                        resize_camera_render(tw, th);
+                    }
+                }
                 render_aspect_image(evs_texture_id_, camera_render_w_, camera_render_h_);
                 break;
+            }
 
             case ViewportContent::TOP_ORTHO:
                 draw_ortho_map(0, draw_list, canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);

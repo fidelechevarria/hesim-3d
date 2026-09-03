@@ -52,16 +52,16 @@ void GuiApp::render_header_bar() {
             if (ImGui::BeginMenu("View")) {
                 if (ImGui::BeginMenu(ICON_MDI_VIEW_DASHBOARD " Multi-View Layout")) {
                     if (ImGui::MenuItem(ICON_MDI_CHECKBOX_BLANK_OUTLINE " 1 Viewport (Single)", nullptr, active_layout_ == MultiViewLayout::VIEW_1_SINGLE)) {
-                        active_layout_ = MultiViewLayout::VIEW_1_SINGLE;
+                        set_multi_view_layout(MultiViewLayout::VIEW_1_SINGLE);
                     }
                     if (ImGui::MenuItem(ICON_MDI_VIEW_SPLIT_VERTICAL " 2 Viewports (Dual Split)", nullptr, active_layout_ == MultiViewLayout::VIEW_2_SPLIT)) {
-                        active_layout_ = MultiViewLayout::VIEW_2_SPLIT;
+                        set_multi_view_layout(MultiViewLayout::VIEW_2_SPLIT);
                     }
                     if (ImGui::MenuItem(ICON_MDI_VIEW_AGENDA_OUTLINE " 3 Viewports (Triple Split)", nullptr, active_layout_ == MultiViewLayout::VIEW_3_SPLIT)) {
-                        active_layout_ = MultiViewLayout::VIEW_3_SPLIT;
+                        set_multi_view_layout(MultiViewLayout::VIEW_3_SPLIT);
                     }
                     if (ImGui::MenuItem(ICON_MDI_VIEW_GRID " 4 Viewports (2x2 Grid)", nullptr, active_layout_ == MultiViewLayout::VIEW_4_GRID)) {
-                        active_layout_ = MultiViewLayout::VIEW_4_GRID;
+                        set_multi_view_layout(MultiViewLayout::VIEW_4_GRID);
                     }
                     ImGui::EndMenu();
                 }
@@ -70,6 +70,7 @@ void GuiApp::render_header_bar() {
                     split_ratio_x_ = 0.5f;
                     split_ratio_y_ = 0.5f;
                     timeline_height_px_ = 280.0f;
+                    reset_viewport_resolutions();
                 }
                 ImGui::EndMenu();
             }

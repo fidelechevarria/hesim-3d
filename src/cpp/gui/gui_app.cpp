@@ -679,8 +679,9 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     if (canvas_w < 10.0f || canvas_h < 10.0f) return;
 
     // Detect viewport size changes
-    if (std::abs(canvas_w - last_canvas_w_[ortho_idx]) > 4.0f ||
-        std::abs(canvas_h - last_canvas_h_[ortho_idx]) > 4.0f) {
+    float thresh = (layout_settle_frames_ > 0) ? 0.5f : 4.0f;
+    if (std::abs(canvas_w - last_canvas_w_[ortho_idx]) > thresh ||
+        std::abs(canvas_h - last_canvas_h_[ortho_idx]) > thresh) {
         ortho_dirty_[ortho_idx] = true;
         last_canvas_w_[ortho_idx] = canvas_w;
         last_canvas_h_[ortho_idx] = canvas_h;
@@ -1323,6 +1324,23 @@ void GuiApp::set_app_mode(AppMode mode) {
         } else {
             update_simulated_viewport_buffers();
         }
+    }
+
+    reset_viewport_resolutions();
+}
+
+void GuiApp::set_multi_view_layout(MultiViewLayout layout) {
+    if (active_layout_ == layout) return;
+    active_layout_ = layout;
+    reset_viewport_resolutions();
+}
+
+void GuiApp::reset_viewport_resolutions() {
+    layout_settle_frames_ = 5;
+    for (int i = 0; i < 3; ++i) {
+        ortho_dirty_[i] = true;
+        last_canvas_w_[i] = 0.0f;
+        last_canvas_h_[i] = 0.0f;
     }
 }
 

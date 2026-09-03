@@ -117,7 +117,7 @@ private:
 
     double current_time_sec_{0.0};
     double playback_speed_{1.0};
-    int layout_init_frames_{5};
+    int layout_settle_frames_{5};
     int selected_keyframe_idx_{-1};
 
     // Interpolation & Spline
@@ -233,6 +233,8 @@ private:
 
     // Workflow & Simulation Methods
     void set_app_mode(AppMode mode);
+    void set_multi_view_layout(MultiViewLayout layout);
+    void reset_viewport_resolutions();
     void trigger_hesim_simulation();
     void update_simulated_viewport_buffers();
     bool export_simulated_dataset(const std::string& path);
