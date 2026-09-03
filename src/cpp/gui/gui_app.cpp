@@ -404,8 +404,8 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
     }
 
     // 5. Roll Keys (Q / E)
-    if (ImGui::IsKeyDown(ImGuiKey_Q)) camera_roll_deg_ -= 0.8;
-    if (ImGui::IsKeyDown(ImGuiKey_E)) camera_roll_deg_ += 0.8;
+    if (ImGui::IsKeyDown(ImGuiKey_Q)) camera_roll_deg_ += 0.8;
+    if (ImGui::IsKeyDown(ImGuiKey_E)) camera_roll_deg_ -= 0.8;
 }
 
 void GuiApp::update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h) {
