@@ -44,20 +44,65 @@ void SE3Spline::build_from_waypoints(const std::vector<Eigen::Vector3d>& positio
         throw std::invalid_argument("Waypoints must have at least 2 matching positions and orientations.");
     }
 
-    // Pad with boundary points if fewer than 4 points
-    positions_.clear();
-    orientations_.clear();
+    size_t N = positions.size();
 
-    positions_.push_back(positions.front());
-    orientations_.push_back(orientations.front().normalized());
+    // -------------------------------------------------------------------------
+    // 1. Position: Solve tridiagonal system for interpolating cubic B-spline
+    // Ensures P(t_k) == positions[k] EXACTLY at all keyframes and endpoints!
+    // -------------------------------------------------------------------------
+    std::vector<double> c_prime(N, 0.0);
+    std::vector<Eigen::Vector3d> d_prime(N, Eigen::Vector3d::Zero());
 
-    for (size_t i = 0; i < positions.size(); ++i) {
-        positions_.push_back(positions[i]);
-        orientations_.push_back(orientations[i].normalized());
+    c_prime[0] = 1.0 / 3.0;
+    d_prime[0] = (4.0 * positions[0]) / 3.0;
+
+    for (size_t i = 1; i < N; ++i) {
+        double diag = (i == N - 1) ? 3.0 : 4.0;
+        double rhs_mult = (i == N - 1) ? 4.0 : 6.0;
+        Eigen::Vector3d rhs = rhs_mult * positions[i];
+
+        double denom = diag - 1.0 * c_prime[i - 1];
+        if (i < N - 1) {
+            c_prime[i] = 1.0 / denom;
+        }
+        d_prime[i] = (rhs - d_prime[i - 1]) / denom;
     }
 
-    positions_.push_back(positions.back());
-    orientations_.push_back(orientations.back().normalized());
+    std::vector<Eigen::Vector3d> c_inner(N);
+    c_inner[N - 1] = d_prime[N - 1];
+    for (int i = static_cast<int>(N) - 2; i >= 0; --i) {
+        c_inner[i] = d_prime[i] - c_prime[i] * c_inner[i + 1];
+    }
+
+    positions_.clear();
+    positions_.reserve(N + 2);
+    positions_.push_back(2.0 * positions.front() - c_inner.front()); // c_0 ghost
+    for (size_t i = 0; i < N; ++i) {
+        positions_.push_back(c_inner[i]);
+    }
+    positions_.push_back(2.0 * positions.back() - c_inner.back()); // c_{N+1} ghost
+
+    // -------------------------------------------------------------------------
+    // 2. Orientation: Pad with extrapolated ghost orientations for smooth boundary
+    // -------------------------------------------------------------------------
+    orientations_.clear();
+    orientations_.reserve(N + 2);
+
+    Eigen::Quaterniond q0 = orientations.front().normalized();
+    Eigen::Quaterniond q1 = orientations[1].normalized();
+    Eigen::Vector3d omega_start = log_so3(q0.toRotationMatrix().transpose() * q1.toRotationMatrix());
+    Eigen::Quaterniond q_ghost_start = Eigen::Quaterniond(q0.toRotationMatrix() * exp_so3(-omega_start)).normalized();
+
+    Eigen::Quaterniond q_prev = orientations[N - 2].normalized();
+    Eigen::Quaterniond q_end = orientations.back().normalized();
+    Eigen::Vector3d omega_end = log_so3(q_prev.toRotationMatrix().transpose() * q_end.toRotationMatrix());
+    Eigen::Quaterniond q_ghost_end = Eigen::Quaterniond(q_end.toRotationMatrix() * exp_so3(omega_end)).normalized();
+
+    orientations_.push_back(q_ghost_start);
+    for (const auto& q : orientations) {
+        orientations_.push_back(q.normalized());
+    }
+    orientations_.push_back(q_ghost_end);
 
     size_t num_segments = positions_.size() - 3;
     dt_ = total_duration_sec / static_cast<double>(num_segments);
