@@ -442,7 +442,7 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
 
         float orbit_speed = 0.085f * std::max(0.05f, nav_speed_factor_);
         camera_yaw_deg_ -= smooth_orbit_dx_ * orbit_speed;
-        camera_pitch_deg_ += smooth_orbit_dy_ * orbit_speed;
+        camera_pitch_deg_ -= smooth_orbit_dy_ * orbit_speed;
         camera_pitch_deg_ = std::clamp(camera_pitch_deg_, -89.0, 89.0);
 
         // Keep camera_target_ synchronized along look direction
