@@ -141,7 +141,8 @@ NB_MODULE(_hesim3d_core, m) {
         .def_rw("sim_fps", &hesim3d::GuiConfig::sim_fps)
         .def_rw("event_threshold", &hesim3d::GuiConfig::event_threshold)
         .def_rw("exposure_ms", &hesim3d::GuiConfig::exposure_ms)
-        .def_rw("accumulation_window_ms", &hesim3d::GuiConfig::accumulation_window_ms);
+        .def_rw("accumulation_window_ms", &hesim3d::GuiConfig::accumulation_window_ms)
+        .def_rw("font_dir", &hesim3d::GuiConfig::font_dir);
 
     m.def("launch_gui", &hesim3d::launch_gui, "config"_a,
           nb::call_guard<nb::gil_scoped_release>(),

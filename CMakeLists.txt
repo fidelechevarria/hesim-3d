@@ -144,6 +144,7 @@ if(HESIM3D_BUILD_GUI)
 
     set(GUI_LIBS glfw ${CMAKE_DL_LIBS} GL)
     add_compile_definitions(HESIM3D_ENABLE_GUI=1)
+    add_compile_definitions(IMGUI_USE_WCHAR32=1)
 endif()
 
 # -----------------------------------------------------------------------------

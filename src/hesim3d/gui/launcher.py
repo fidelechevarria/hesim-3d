@@ -38,5 +38,13 @@ def launch_interactive_gui(
     cfg.window_width = int(window_width)
     cfg.window_height = int(window_height)
 
-    # 3. Launch native C++ GLFW + ImGui loop
+    # 3. Resolve bundled fonts directory
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    font_dir = repo_root / "assets" / "fonts"
+    if not font_dir.exists():
+        font_dir = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+    if font_dir.exists():
+        cfg.font_dir = str(font_dir)
+
+    # 4. Launch native C++ GLFW + ImGui loop
     return _cpp_launch_gui(cfg)

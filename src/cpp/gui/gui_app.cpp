@@ -5,6 +5,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
+#include "icons_material_design.h"
 
 #include <iostream>
 #include <fstream>
@@ -896,32 +897,155 @@ bool GuiApp::init() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Load clean TrueType font if available on Linux system
-    const char* font_candidates[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf"
-    };
-    for (const char* fpath : font_candidates) {
-        if (std::filesystem::exists(fpath)) {
-            io.Fonts->AddFontFromFileTTF(fpath, 15.0f);
-            break;
+    // -------------------------------------------------------------------------
+    // 1. Typography & Vector Icon Glyphs (Inspired by erhe / Timo Suoranta)
+    // -------------------------------------------------------------------------
+    std::filesystem::path font_dir = config_.font_dir;
+    if (font_dir.empty() || !std::filesystem::exists(font_dir)) {
+        std::filesystem::path candidates[] = {
+            "assets/fonts",
+            "../assets/fonts",
+            "../../assets/fonts",
+            "/home/fidelechevarria/repos/hesim-3d/assets/fonts"
+        };
+        for (const auto& cand : candidates) {
+            if (std::filesystem::exists(cand)) {
+                font_dir = cand;
+                break;
+            }
         }
     }
 
-    // Google Earth Studio sleek dark styling
+    std::filesystem::path sans_path = font_dir / "SourceSansPro-Regular.otf";
+    std::filesystem::path mono_path = font_dir / "SourceCodePro-Semibold.otf";
+    std::filesystem::path icon_path = font_dir / "materialdesignicons-webfont.ttf";
+
+    // System font fallbacks if bundled fonts not found
+    if (!std::filesystem::exists(sans_path)) {
+        const char* font_candidates[] = {
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        };
+        for (const char* fpath : font_candidates) {
+            if (std::filesystem::exists(fpath)) {
+                sans_path = fpath;
+                break;
+            }
+        }
+    }
+
+    // Load Primary Sans Font (15.5px)
+    if (std::filesystem::exists(sans_path)) {
+        font_regular_ = io.Fonts->AddFontFromFileTTF(sans_path.string().c_str(), 15.5f);
+    } else {
+        font_regular_ = io.Fonts->AddFontDefault();
+    }
+
+    // Merge Material Design Vector Icon Font directly into the primary font atlas
+    if (std::filesystem::exists(icon_path)) {
+        ImFontConfig icon_cfg;
+        icon_cfg.MergeMode = true;
+        icon_cfg.PixelSnapH = true;
+        icon_cfg.GlyphMinAdvanceX = 16.0f;
+        static const ImWchar icon_ranges[] = { ICON_MIN_MDI, ICON_MAX_MDI, 0 };
+        io.Fonts->AddFontFromFileTTF(icon_path.string().c_str(), 15.5f, &icon_cfg, icon_ranges);
+    }
+
+    // Load Monospace Font for clean, non-jittering telemetry, coordinates & timecode (14.0px)
+    if (std::filesystem::exists(mono_path)) {
+        font_mono_ = io.Fonts->AddFontFromFileTTF(mono_path.string().c_str(), 14.0f);
+        if (std::filesystem::exists(icon_path)) {
+            ImFontConfig icon_cfg;
+            icon_cfg.MergeMode = true;
+            icon_cfg.PixelSnapH = true;
+            static const ImWchar icon_ranges[] = { ICON_MIN_MDI, ICON_MAX_MDI, 0 };
+            io.Fonts->AddFontFromFileTTF(icon_path.string().c_str(), 14.0f, &icon_cfg, icon_ranges);
+        }
+    } else {
+        font_mono_ = font_regular_;
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. High-Performance Dark Aesthetic (Inspired by erhe)
+    // -------------------------------------------------------------------------
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.GrabRounding = 3.0f;
-    style.PopupRounding = 4.0f;
-    style.ScrollbarRounding = 3.0f;
+
+    style.WindowMenuButtonPosition = ImGuiDir_None;
+
+    style.WindowPadding    = ImVec2{6.0f, 6.0f};
+    style.FramePadding     = ImVec2{5.0f, 3.0f};
+    style.CellPadding      = ImVec2{4.0f, 3.0f};
+    style.ItemSpacing      = ImVec2{6.0f, 4.0f};
+    style.ItemInnerSpacing = ImVec2{4.0f, 4.0f};
+    style.IndentSpacing    = 18.0f;
+    style.ScrollbarSize    = 12.0f;
+    style.GrabMinSize      = 10.0f;
+
     style.WindowBorderSize = 1.0f;
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.11f, 0.11f, 0.12f, 1.0f);
-    style.Colors[ImGuiCol_Header] = ImVec4(0.20f, 0.22f, 0.26f, 1.0f);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.28f, 0.32f, 0.38f, 1.0f);
-    style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.35f, 0.40f, 0.48f, 1.0f);
+    style.ChildBorderSize  = 1.0f;
+    style.PopupBorderSize  = 1.0f;
+    style.FrameBorderSize  = 0.0f;
+    style.TabBorderSize    = 0.0f;
+
+    style.WindowRounding    = 3.0f;
+    style.ChildRounding     = 3.0f;
+    style.FrameRounding     = 3.0f;
+    style.PopupRounding     = 3.0f;
+    style.ScrollbarRounding = 3.0f;
+    style.GrabRounding      = 3.0f;
+    style.TabRounding       = 3.0f;
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_Text]                   = ImVec4(0.92f, 0.92f, 0.94f, 1.00f);
+    colors[ImGuiCol_TextDisabled]           = ImVec4(0.50f, 0.50f, 0.52f, 1.00f);
+    colors[ImGuiCol_WindowBg]               = ImVec4(0.12f, 0.12f, 0.13f, 1.00f);
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.14f, 0.14f, 0.15f, 1.00f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(0.08f, 0.08f, 0.09f, 0.98f);
+    colors[ImGuiCol_Border]                 = ImVec4(0.22f, 0.22f, 0.24f, 1.00f);
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_FrameBg]                = ImVec4(0.07f, 0.07f, 0.08f, 0.75f);
+    colors[ImGuiCol_FrameBgHovered]         = ImVec4(0.35f, 0.40f, 0.50f, 0.25f);
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(0.35f, 0.40f, 0.50f, 0.40f);
+    colors[ImGuiCol_TitleBg]                = ImVec4(0.10f, 0.10f, 0.11f, 1.00f);
+    colors[ImGuiCol_TitleBgActive]          = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(0.10f, 0.10f, 0.11f, 1.00f);
+    colors[ImGuiCol_MenuBarBg]              = ImVec4(0.08f, 0.08f, 0.09f, 1.00f);
+    colors[ImGuiCol_ScrollbarBg]            = ImVec4(0.12f, 0.12f, 0.13f, 0.60f);
+    colors[ImGuiCol_ScrollbarGrab]          = ImVec4(0.70f, 0.70f, 0.72f, 0.20f);
+    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(0.70f, 0.70f, 0.72f, 0.40f);
+    colors[ImGuiCol_ScrollbarGrabActive]    = ImVec4(0.40f, 0.48f, 0.85f, 0.80f);
+    colors[ImGuiCol_CheckMark]              = ImVec4(0.64f, 0.83f, 0.31f, 1.00f);
+    colors[ImGuiCol_SliderGrab]             = ImVec4(0.32f, 0.36f, 0.78f, 1.00f);
+    colors[ImGuiCol_SliderGrabActive]       = ImVec4(0.42f, 0.48f, 1.00f, 1.00f);
+    colors[ImGuiCol_Button]                 = ImVec4(0.20f, 0.20f, 0.22f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]          = ImVec4(0.30f, 0.34f, 0.44f, 0.80f);
+    colors[ImGuiCol_ButtonActive]           = ImVec4(0.38f, 0.45f, 0.65f, 1.00f);
+    colors[ImGuiCol_Header]                 = ImVec4(0.18f, 0.18f, 0.20f, 1.00f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(0.26f, 0.28f, 0.36f, 0.70f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(0.32f, 0.36f, 0.48f, 0.90f);
+    colors[ImGuiCol_Separator]              = ImVec4(0.22f, 0.22f, 0.24f, 0.80f);
+    colors[ImGuiCol_SeparatorHovered]       = ImVec4(0.35f, 0.50f, 0.85f, 0.60f);
+    colors[ImGuiCol_SeparatorActive]        = ImVec4(0.35f, 0.50f, 0.85f, 1.00f);
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(0.35f, 0.50f, 0.85f, 0.30f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(0.35f, 0.50f, 0.85f, 0.70f);
+    colors[ImGuiCol_ResizeGripActive]       = ImVec4(0.35f, 0.50f, 0.85f, 1.00f);
+    colors[ImGuiCol_Tab]                    = ImVec4(0.13f, 0.13f, 0.14f, 1.00f);
+    colors[ImGuiCol_TabHovered]             = ImVec4(0.22f, 0.24f, 0.30f, 1.00f);
+    colors[ImGuiCol_TabSelected]            = ImVec4(0.18f, 0.18f, 0.20f, 1.00f);
+    colors[ImGuiCol_TabSelectedOverline]    = ImVec4(0.38f, 0.45f, 0.85f, 1.00f);
+    colors[ImGuiCol_TabDimmed]              = ImVec4(0.12f, 0.12f, 0.13f, 1.00f);
+    colors[ImGuiCol_TabDimmedSelected]      = ImVec4(0.16f, 0.16f, 0.18f, 1.00f);
+    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.30f, 0.35f, 0.70f, 1.00f);
+    colors[ImGuiCol_TableHeaderBg]          = ImVec4(0.10f, 0.10f, 0.11f, 1.00f);
+    colors[ImGuiCol_TableBorderStrong]      = ImVec4(0.25f, 0.25f, 0.28f, 1.00f);
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(0.18f, 0.18f, 0.20f, 1.00f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(1.00f, 1.00f, 1.00f, 0.02f);
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(0.30f, 0.40f, 0.75f, 0.40f);
+    colors[ImGuiCol_NavCursor]              = ImVec4(0.40f, 0.50f, 0.90f, 1.00f);
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.05f, 0.05f, 0.06f, 0.65f);
 
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init("#version 130");
@@ -1045,14 +1169,16 @@ void GuiApp::render_simulation_progress_modal() {
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::Begin("H-ESIM Physics Simulation##Modal", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "⚡ Synthesizing Physical Sensor Dynamics...");
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), ICON_MDI_LIGHTNING_BOLT " Synthesizing Physical Sensor Dynamics...");
         ImGui::Separator();
         ImGui::Spacing();
 
         ImGui::ProgressBar(sim_progress_, ImVec2(-1, 26));
         ImGui::Spacing();
+        if (font_mono_) ImGui::PushFont(font_mono_);
         ImGui::TextDisabled("%s", sim_status_text_.c_str());
-        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Computing Multi-Exposure Motion Blur + Quad-Bayer Noise + EVS Events...");
+        if (font_mono_) ImGui::PopFont();
+        ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.78f, 1.0f), ICON_MDI_CHIP " Multi-Exposure Blur + Quad-Bayer RAW Noise + EVS Events");
     }
     ImGui::End();
 }

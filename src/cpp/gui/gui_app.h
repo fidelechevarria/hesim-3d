@@ -16,6 +16,7 @@
 struct GLFWwindow;
 struct ImDrawList;
 struct ImVec2;
+struct ImFont;
 
 namespace hesim3d {
 
@@ -78,6 +79,7 @@ struct GuiConfig {
     double event_threshold{0.20};
     double exposure_ms{10.0};
     double accumulation_window_ms{20.0};
+    std::string font_dir{""};
 };
 
 class GuiApp {
@@ -103,6 +105,9 @@ public:
 private:
     GuiConfig config_;
     GLFWwindow* window_{nullptr};
+    ImFont* font_regular_{nullptr};
+    ImFont* font_mono_{nullptr};
+    ImFont* font_icons_{nullptr};
 
     std::atomic<bool> is_running_{false};
     std::atomic<bool> is_playing_{false};

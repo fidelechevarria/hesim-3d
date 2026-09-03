@@ -1,6 +1,7 @@
 #include "gui_app.h"
 #include <imgui.h>
 #include <implot.h>
+#include "icons_material_design.h"
 #include <iostream>
 #include <algorithm>
 
@@ -132,21 +133,21 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
     std::string win_id = "##ViewportWindow_" + std::to_string(quad_idx);
 
     if (ImGui::Begin(win_id.c_str(), nullptr, flags)) {
-        // Top Toolbar inside each Viewport (Google Earth Studio Dropdown)
+        // Top Toolbar inside each Viewport
         const char* view_names[] = {
-            "Camera (Clean Look-Through)",
-            "EVS Events (Accumulation)",
-            "Top (Top Ortho)",
-            "Front (Front Ortho)",
-            "Side (Side Ortho)",
-            "3D Perspective",
-            "IMU Telemetry",
-            "Simulated APS (Blur + Noise)"
+            ICON_MDI_CAMERA " Camera (Clean Look-Through)",
+            ICON_MDI_LIGHTNING_BOLT " EVS Events (Accumulation)",
+            ICON_MDI_VIEW_GRID " Top (Top Ortho X-Z)",
+            ICON_MDI_VIEW_AGENDA " Front (Front Ortho X-Y)",
+            ICON_MDI_VIEW_WEEK " Side (Side Ortho Z-Y)",
+            ICON_MDI_ROTATE_ORBIT " 3D Perspective",
+            ICON_MDI_CHART_BELL_CURVE " IMU Telemetry",
+            ICON_MDI_IMAGE " Simulated APS (Blur + Noise)"
         };
 
         int cur_view = static_cast<int>(viewport_views_[quad_idx]);
-        ImGui::SetNextItemWidth(190);
-        std::string combo_id = "⚙ View##" + std::to_string(quad_idx);
+        ImGui::SetNextItemWidth(210);
+        std::string combo_id = "##ViewCombo_" + std::to_string(quad_idx);
         if (ImGui::Combo(combo_id.c_str(), &cur_view, view_names, 8)) {
             viewport_views_[quad_idx] = static_cast<ViewportContent>(cur_view);
         }
@@ -154,37 +155,37 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
         ImGui::SameLine();
         if (viewport_views_[quad_idx] == ViewportContent::CAMERA_CLEAN) {
             if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Clean 3D Look-Through | Left: Pan | Right: Dolly | Mid: Orbit | Q/E: Roll]");
+                ImGui::TextColored(ImVec4(0.45f, 0.85f, 1.0f, 1.0f), ICON_MDI_AXIS_ARROW " [Look-Through | Left: Pan | Right: Dolly | Mid: Orbit | Q/E: Roll]");
             } else {
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Clean Ground Truth (Filament Reference)]");
+                ImGui::TextColored(ImVec4(0.45f, 0.85f, 1.0f, 1.0f), ICON_MDI_CHECK_CIRCLE_OUTLINE " [Ground Truth Reference (Filament)]");
             }
         } else if (viewport_views_[quad_idx] == ViewportContent::SIMULATED_APS_SENSOR) {
-            ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f), "[Physical Sensor APS | Multi-Exposure Blur + Poisson Noise + CFA]");
+            ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.30f, 1.0f), ICON_MDI_CHIP " [Physical Sensor APS | Blur + Poisson Noise + CFA]");
         } else if (viewport_views_[quad_idx] == ViewportContent::EVS_ACCUMULATION) {
-            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "[EVS Events Slice | Red: ON (+1) | Blue: OFF (-1)]");
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), ICON_MDI_LIGHTNING_BOLT " [EVS Event Slice | Red: ON (+1) | Blue: OFF (-1)]");
         } else if (viewport_views_[quad_idx] == ViewportContent::TOP_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Top Ortho | X-Z]");
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.35f, 1.0f), ICON_MDI_VIEW_GRID " [Top Ortho | X-Z]");
             ImGui::SameLine();
-            std::string btn_id = "Reset (F)##top" + std::to_string(quad_idx);
+            std::string btn_id = ICON_MDI_FIT_TO_SCREEN " Frame##top" + std::to_string(quad_idx);
             if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(0);
             ImGui::SameLine();
-            ImGui::TextDisabled("| Right/Mid Drag: Pan | Wheel: Zoom | Drag KF: Edit");
+            ImGui::TextDisabled("| Pan: Drag | Zoom: Wheel | Edit: Drag KF");
         } else if (viewport_views_[quad_idx] == ViewportContent::SIDE_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Side Ortho | Z-Y]");
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.35f, 1.0f), ICON_MDI_VIEW_WEEK " [Side Ortho | Z-Y]");
             ImGui::SameLine();
-            std::string btn_id = "Reset (F)##side" + std::to_string(quad_idx);
+            std::string btn_id = ICON_MDI_FIT_TO_SCREEN " Frame##side" + std::to_string(quad_idx);
             if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(2);
             ImGui::SameLine();
-            ImGui::TextDisabled("| Right/Mid Drag: Pan | Wheel: Zoom | Drag KF: Edit");
+            ImGui::TextDisabled("| Pan: Drag | Zoom: Wheel | Edit: Drag KF");
         } else if (viewport_views_[quad_idx] == ViewportContent::FRONT_ORTHO) {
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "[Front Ortho | X-Y]");
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.35f, 1.0f), ICON_MDI_VIEW_AGENDA " [Front Ortho | X-Y]");
             ImGui::SameLine();
-            std::string btn_id = "Reset (F)##front" + std::to_string(quad_idx);
+            std::string btn_id = ICON_MDI_FIT_TO_SCREEN " Frame##front" + std::to_string(quad_idx);
             if (ImGui::SmallButton(btn_id.c_str())) frame_ortho_view(1);
             ImGui::SameLine();
-            ImGui::TextDisabled("| Right/Mid Drag: Pan | Wheel: Zoom | Drag KF: Edit");
+            ImGui::TextDisabled("| Pan: Drag | Zoom: Wheel | Edit: Drag KF");
         } else if (viewport_views_[quad_idx] == ViewportContent::IMU_TELEMETRY) {
-            ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.7f, 1.0f), "[IMU Telemetry | Gyroscope (deg/s) + Accelerometer (m/s²)]");
+            ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.7f, 1.0f), ICON_MDI_CHART_BELL_CURVE " [IMU Telemetry | Gyroscope (rad/s) + Accelerometer (m/s²)]");
         }
 
         ImGui::Separator();
@@ -214,11 +215,11 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
                 // Draw central target reticle
                 float cx = img_p0.x + draw_size.x * 0.5f;
                 float cy = img_p0.y + draw_size.y * 0.5f;
-                draw_list->AddCircle(ImVec2(cx, cy), 14.0f, IM_COL32(0, 220, 255, 180), 16, 1.5f);
-                draw_list->AddLine(ImVec2(cx - 20, cy), ImVec2(cx - 5, cy), IM_COL32(0, 220, 255, 180), 1.5f);
-                draw_list->AddLine(ImVec2(cx + 5, cy), ImVec2(cx + 20, cy), IM_COL32(0, 220, 255, 180), 1.5f);
-                draw_list->AddLine(ImVec2(cx, cy - 20), ImVec2(cx, cy - 5), IM_COL32(0, 220, 255, 180), 1.5f);
-                draw_list->AddLine(ImVec2(cx, cy + 5), ImVec2(cx, cy + 20), IM_COL32(0, 220, 255, 180), 1.5f);
+                draw_list->AddCircle(ImVec2(cx, cy), 14.0f, IM_COL32(95, 120, 240, 180), 16, 1.5f);
+                draw_list->AddLine(ImVec2(cx - 20, cy), ImVec2(cx - 5, cy), IM_COL32(95, 120, 240, 180), 1.5f);
+                draw_list->AddLine(ImVec2(cx + 5, cy), ImVec2(cx + 20, cy), IM_COL32(95, 120, 240, 180), 1.5f);
+                draw_list->AddLine(ImVec2(cx, cy - 20), ImVec2(cx, cy - 5), IM_COL32(95, 120, 240, 180), 1.5f);
+                draw_list->AddLine(ImVec2(cx, cy + 5), ImVec2(cx, cy + 20), IM_COL32(95, 120, 240, 180), 1.5f);
             }
         };
 
