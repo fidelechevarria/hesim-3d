@@ -182,9 +182,14 @@ private:
     Eigen::Vector2d ortho_pan_[3]{ {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0} }; // Top, Front, Side
     double ortho_scale_[3]{ 0.25, 0.25, 0.25 }; // Scale factor for Sponza centimeter coords
     uint32_t ortho_texture_id_[3]{0, 0, 0};
+    uint32_t ortho_tex_w_[3]{640, 640, 640};
+    uint32_t ortho_tex_h_[3]{480, 480, 480};
     std::vector<uint8_t> ortho_img_buffers_[3];
     bool ortho_dirty_[3]{true, true, true};
+    int dragging_camera_ortho_idx_{-1}; // -1 = none, 0 = top, 1 = front, 2 = side
+    int dragging_keyframe_ortho_idx_{-1}; // -1 = none, 0 = top, 1 = front, 2 = side
     int dragging_keyframe_idx_{-1};
+    int hovered_ortho_element_[3]{-1, -1, -1}; // per ortho viewport: -2 = camera, >= 0 = keyframe index, -1 = none
     float ortho_dimming_{0.15f}; // Background brightness/dimming adjustment
     float last_canvas_w_[3]{0.0f, 0.0f, 0.0f};
     float last_canvas_h_[3]{0.0f, 0.0f, 0.0f};
@@ -196,6 +201,8 @@ private:
 
     uint32_t sensor_tex_w_{640};
     uint32_t sensor_tex_h_{480};
+    uint32_t camera_render_w_{640};
+    uint32_t camera_render_h_{480};
     std::vector<uint8_t> sensor_img_buffer_;
     std::vector<uint8_t> evs_img_buffer_;
     std::vector<float> prev_lum_buffer_;
@@ -231,6 +238,7 @@ private:
     bool export_simulated_dataset(const std::string& path);
 
     void update_simulation_step(double dt);
+    void resize_camera_render(uint32_t new_w, uint32_t new_h);
     void create_gl_textures();
     void update_gl_textures();
     void compute_camera_pose(Eigen::Vector3d& out_pos, Eigen::Quaterniond& out_ori);

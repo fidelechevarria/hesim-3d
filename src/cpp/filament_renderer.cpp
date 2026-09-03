@@ -141,8 +141,48 @@ void FilamentRenderer::cleanup() {
         swap_chain_ = nullptr;
     }
 
+    if (ortho_swap_chain_) {
+        engine_->destroy(ortho_swap_chain_);
+        ortho_swap_chain_ = nullptr;
+    }
+
     filament::Engine::destroy(&engine_);
     engine_ = nullptr;
+}
+
+void FilamentRenderer::resize_camera(uint32_t width, uint32_t height) {
+    if (width < 32) width = 32;
+    if (height < 32) height = 32;
+    width = (width + 3) & ~3u;
+    height = (height + 1) & ~1u;
+
+    if (width == width_ && height == height_ && swap_chain_) return;
+
+    width_ = width;
+    height_ = height;
+
+    if (engine_) {
+        if (swap_chain_) {
+            engine_->destroy(swap_chain_);
+            swap_chain_ = nullptr;
+        }
+        swap_chain_ = engine_->createSwapChain(width_, height_, filament::SwapChain::CONFIG_READABLE);
+        if (view_) {
+            view_->setViewport(filament::Viewport(0, 0, width_, height_));
+        }
+    }
+
+    double fov_y_deg = 2.0 * std::atan(0.5 * intrinsics_.height / intrinsics_.fy) * 180.0 / std::numbers::pi;
+    intrinsics_.width = width_;
+    intrinsics_.height = height_;
+    intrinsics_.cx = width_ * 0.5;
+    intrinsics_.cy = height_ * 0.5;
+    double aspect = static_cast<double>(width_) / static_cast<double>(height_);
+    if (camera_) {
+        camera_->setProjection(fov_y_deg, aspect, intrinsics_.near_plane, intrinsics_.far_plane, filament::Camera::Fov::VERTICAL);
+    }
+
+    readback_scratch_.resize(width_ * height_ * 3, 0);
 }
 
 void FilamentRenderer::set_intrinsics(const CameraIntrinsics& intrinsics) {
@@ -213,13 +253,31 @@ bool FilamentRenderer::render_ortho_frame(int ortho_idx,
                                           float canvas_h,
                                           uint8_t* out_rgb_buffer,
                                           size_t buffer_size) {
-    if (!renderer_ || !swap_chain_ || !view_ || !ortho_camera_) return false;
-    size_t expected_size = width_ * height_ * 3;
+    if (!renderer_ || !view_ || !ortho_camera_ || !engine_) return false;
+
+    uint32_t target_w = std::clamp(static_cast<uint32_t>(canvas_w), 32u, 3840u);
+    uint32_t target_h = std::clamp(static_cast<uint32_t>(canvas_h), 32u, 2160u);
+    target_w = (target_w + 3) & ~3u;
+    target_h = (target_h + 1) & ~1u;
+
+    size_t expected_size = static_cast<size_t>(target_w) * target_h * 3;
     if (buffer_size < expected_size) return false;
 
+    if (!ortho_swap_chain_ || ortho_w_ != target_w || ortho_h_ != target_h) {
+        if (ortho_swap_chain_) {
+            engine_->destroy(ortho_swap_chain_);
+            ortho_swap_chain_ = nullptr;
+        }
+        ortho_swap_chain_ = engine_->createSwapChain(target_w, target_h, filament::SwapChain::CONFIG_READABLE);
+        ortho_w_ = target_w;
+        ortho_h_ = target_h;
+    }
+
+    if (!ortho_swap_chain_) return false;
+
     double s = std::max(0.0001, scale);
-    double cw = std::max(10.0, static_cast<double>(canvas_w));
-    double ch = std::max(10.0, static_cast<double>(canvas_h));
+    double cw = std::max(10.0, static_cast<double>(target_w));
+    double ch = std::max(10.0, static_cast<double>(target_h));
     double half_w = (cw * 0.5) / s;
     double half_h = (ch * 0.5) / s;
 
@@ -247,20 +305,21 @@ bool FilamentRenderer::render_ortho_frame(int ortho_idx,
         model[2] = filament::math::float4(0.0f, 0.0f, 1.0f, 0.0f);   // Back = +Z
         model[3] = filament::math::float4(static_cast<float>(pan.x()), static_cast<float>(pan.y()), dist, 1.0f);
     } else {
-        // Side View (Z-Y plane): Looking along -X into screen (+X to -X)
-        // Screen Right = World +Z, Screen Top = World +Y
+        // Side View (Z-Y plane): Looking along +X from -X
+        // Screen Right = World +Z, Screen Top = World +Y, Screen Look = World +X
         model[0] = filament::math::float4(0.0f, 0.0f, 1.0f, 0.0f);   // Right = +Z
         model[1] = filament::math::float4(0.0f, 1.0f, 0.0f, 0.0f);   // Up = +Y
-        model[2] = filament::math::float4(1.0f, 0.0f, 0.0f, 0.0f);   // Back = +X
-        model[3] = filament::math::float4(dist, static_cast<float>(pan.y()), static_cast<float>(pan.x()), 1.0f);
+        model[2] = filament::math::float4(-1.0f, 0.0f, 0.0f, 0.0f);  // Back = -X
+        model[3] = filament::math::float4(-dist, static_cast<float>(pan.y()), static_cast<float>(pan.x()), 1.0f);
     }
 
     ortho_camera_->setModelMatrix(model);
 
     view_->setCamera(ortho_camera_);
+    view_->setViewport(filament::Viewport(0, 0, target_w, target_h));
 
     bool success = false;
-    if (renderer_->beginFrame(swap_chain_)) {
+    if (renderer_->beginFrame(ortho_swap_chain_)) {
         renderer_->render(view_);
 
         struct CallbackUserData {
@@ -282,14 +341,15 @@ bool FilamentRenderer::render_ortho_frame(int ortho_idx,
             &ud
         );
 
-        renderer_->readPixels(0, 0, width_, height_, std::move(pbd));
+        renderer_->readPixels(0, 0, target_w, target_h, std::move(pbd));
         renderer_->endFrame();
         engine_->flushAndWait();
         success = true;
     }
 
-    // Restore sensor camera
+    // Restore sensor camera and its viewport
     view_->setCamera(camera_);
+    view_->setViewport(filament::Viewport(0, 0, width_, height_));
     return success;
 }
 

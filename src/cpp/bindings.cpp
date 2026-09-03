@@ -123,6 +123,7 @@ NB_MODULE(_hesim3d_core, m) {
                                 uint64_t timestamp_us) {
             return self.render_frame(out_buffer.data(), out_buffer.size(), timestamp_us);
         }, "out_buffer"_a, "timestamp_us"_a = 0)
+        .def("resize_camera", &hesim3d::FilamentRenderer::resize_camera, "width"_a, "height"_a)
         .def("width", &hesim3d::FilamentRenderer::width)
         .def("height", &hesim3d::FilamentRenderer::height);
 

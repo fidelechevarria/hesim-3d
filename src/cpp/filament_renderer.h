@@ -72,6 +72,9 @@ public:
     void set_intrinsics(const CameraIntrinsics& intrinsics);
     void set_camera_pose(const Eigen::Vector3d& position, const Eigen::Quaterniond& orientation);
 
+    // Dynamic Resolution
+    void resize_camera(uint32_t width, uint32_t height);
+
     // Offscreen Rendering
     bool render_frame(uint8_t* out_rgb_buffer, size_t buffer_size, uint64_t timestamp_us = 0);
 
@@ -108,6 +111,10 @@ private:
     filament::View* view_{nullptr};
     filament::Camera* camera_{nullptr};
     filament::SwapChain* swap_chain_{nullptr};
+
+    filament::SwapChain* ortho_swap_chain_{nullptr};
+    uint32_t ortho_w_{0};
+    uint32_t ortho_h_{0};
 
     utils::Entity ortho_camera_entity_;
     filament::Camera* ortho_camera_{nullptr};

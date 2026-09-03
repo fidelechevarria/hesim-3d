@@ -225,17 +225,32 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
 
         // Render viewport contents
         switch (viewport_views_[quad_idx]) {
-            case ViewportContent::CAMERA_CLEAN:
-                render_aspect_image(sensor_texture_id_, sensor_tex_w_, sensor_tex_h_);
+            case ViewportContent::CAMERA_CLEAN: {
+                if (avail_sz.x > 10.0f && avail_sz.y > 10.0f) {
+                    float tex_aspect = static_cast<float>(sensor_tex_w_) / static_cast<float>(sensor_tex_h_);
+                    float avail_aspect = avail_sz.x / avail_sz.y;
+                    float draw_w = (avail_aspect > tex_aspect) ? (avail_sz.y * tex_aspect) : avail_sz.x;
+                    float draw_h = (avail_aspect > tex_aspect) ? avail_sz.y : (avail_sz.x / tex_aspect);
+
+                    uint32_t tw = (static_cast<uint32_t>(draw_w) + 3) & ~3u;
+                    uint32_t th = (static_cast<uint32_t>(draw_h) + 1) & ~1u;
+
+                    if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > 8 ||
+                        std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > 8) {
+                        resize_camera_render(tw, th);
+                    }
+                }
+                render_aspect_image(sensor_texture_id_, camera_render_w_, camera_render_h_);
                 handle_camera_mouse_input(canvas_p0.x, canvas_p0.y, canvas_p1.x, canvas_p1.y);
                 break;
+            }
 
             case ViewportContent::SIMULATED_APS_SENSOR:
                 render_aspect_image(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_);
                 break;
 
             case ViewportContent::EVS_ACCUMULATION:
-                render_aspect_image(evs_texture_id_, sensor_tex_w_, sensor_tex_h_);
+                render_aspect_image(evs_texture_id_, camera_render_w_, camera_render_h_);
                 break;
 
             case ViewportContent::TOP_ORTHO:

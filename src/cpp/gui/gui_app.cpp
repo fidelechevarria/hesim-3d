@@ -411,23 +411,36 @@ void GuiApp::handle_camera_mouse_input(float min_x, float min_y, float max_x, fl
 void GuiApp::update_ortho_texture(int ortho_idx, float canvas_w, float canvas_h) {
     if (ortho_idx < 0 || ortho_idx > 2 || !renderer_) return;
 
-    if (ortho_img_buffers_[ortho_idx].size() != sensor_tex_w_ * sensor_tex_h_ * 3) {
-        ortho_img_buffers_[ortho_idx].resize(sensor_tex_w_ * sensor_tex_h_ * 3, 25);
+    uint32_t target_w = std::clamp(static_cast<uint32_t>(canvas_w), 32u, 3840u);
+    uint32_t target_h = std::clamp(static_cast<uint32_t>(canvas_h), 32u, 2160u);
+    target_w = (target_w + 3) & ~3u;
+    target_h = (target_h + 1) & ~1u;
+
+    size_t req_size = static_cast<size_t>(target_w) * target_h * 3;
+    if (ortho_img_buffers_[ortho_idx].size() != req_size) {
+        ortho_img_buffers_[ortho_idx].resize(req_size, 25);
     }
 
     bool success = renderer_->render_ortho_frame(
         ortho_idx,
         ortho_pan_[ortho_idx],
         ortho_scale_[ortho_idx],
-        canvas_w,
-        canvas_h,
+        static_cast<float>(target_w),
+        static_cast<float>(target_h),
         ortho_img_buffers_[ortho_idx].data(),
         ortho_img_buffers_[ortho_idx].size()
     );
 
     if (success && ortho_texture_id_[ortho_idx] != 0) {
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glBindTexture(GL_TEXTURE_2D, ortho_texture_id_[ortho_idx]);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sensor_tex_w_, sensor_tex_h_, GL_RGB, GL_UNSIGNED_BYTE, ortho_img_buffers_[ortho_idx].data());
+        if (ortho_tex_w_[ortho_idx] != target_w || ortho_tex_h_[ortho_idx] != target_h) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, target_w, target_h, 0, GL_RGB, GL_UNSIGNED_BYTE, ortho_img_buffers_[ortho_idx].data());
+            ortho_tex_w_[ortho_idx] = target_w;
+            ortho_tex_h_[ortho_idx] = target_h;
+        } else {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, target_w, target_h, GL_RGB, GL_UNSIGNED_BYTE, ortho_img_buffers_[ortho_idx].data());
+        }
     }
 
     ortho_dirty_[ortho_idx] = false;
@@ -534,46 +547,122 @@ void GuiApp::handle_ortho_mouse_input(int ortho_idx, float min_x, float min_y, f
         ortho_dirty_[ortho_idx] = true;
     }
 
-    // 4. Interactive Keyframe Dragging with Left-Click
+    // 4. Interactive Hover & Dragging for Camera and Keyframes
+    hovered_ortho_element_[ortho_idx] = -1;
+    float best_dist_sq = 1e9f;
+
+    // Check keyframe points
+    for (size_t i = 0; i < keyframes_.size(); ++i) {
+        ImVec2 kp;
+        if (ortho_idx == 0) {
+            kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.x() - pan.x()) * scale),
+                        center_y + static_cast<float>((keyframes_[i].position.z() - pan.y()) * scale));
+        } else if (ortho_idx == 1) {
+            kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.x() - pan.x()) * scale),
+                        center_y - static_cast<float>((keyframes_[i].position.y() - pan.y()) * scale));
+        } else {
+            kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.z() - pan.x()) * scale),
+                        center_y - static_cast<float>((keyframes_[i].position.y() - pan.y()) * scale));
+        }
+
+        float d2 = (mouse_pos.x - kp.x) * (mouse_pos.x - kp.x) + (mouse_pos.y - kp.y) * (mouse_pos.y - kp.y);
+        if (d2 <= 196.0f && d2 < best_dist_sq) { // 14px radius
+            best_dist_sq = d2;
+            hovered_ortho_element_[ortho_idx] = static_cast<int>(i);
+        }
+    }
+
+    // Check camera point
+    ImVec2 cam_screen;
+    if (ortho_idx == 0) {
+        cam_screen = ImVec2(center_x + static_cast<float>((camera_pos_.x() - pan.x()) * scale),
+                            center_y + static_cast<float>((camera_pos_.z() - pan.y()) * scale));
+    } else if (ortho_idx == 1) {
+        cam_screen = ImVec2(center_x + static_cast<float>((camera_pos_.x() - pan.x()) * scale),
+                            center_y - static_cast<float>((camera_pos_.y() - pan.y()) * scale));
+    } else {
+        cam_screen = ImVec2(center_x + static_cast<float>((camera_pos_.z() - pan.x()) * scale),
+                            center_y - static_cast<float>((camera_pos_.y() - pan.y()) * scale));
+    }
+
+    float d2_cam = (mouse_pos.x - cam_screen.x) * (mouse_pos.x - cam_screen.x) + (mouse_pos.y - cam_screen.y) * (mouse_pos.y - cam_screen.y);
+    if (d2_cam <= 256.0f && d2_cam < best_dist_sq) { // 16px radius
+        best_dist_sq = d2_cam;
+        hovered_ortho_element_[ortho_idx] = -2; // Camera
+    }
+
+    if (is_hovered && (hovered_ortho_element_[ortho_idx] != -1 || dragging_camera_ortho_idx_ == ortho_idx || dragging_keyframe_ortho_idx_ == ortho_idx)) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    }
+
+    // Left-Click interaction start
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && is_hovered) {
         dragging_keyframe_idx_ = -1;
-        for (size_t i = 0; i < keyframes_.size(); ++i) {
-            ImVec2 kp;
-            if (ortho_idx == 0) {
-                kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.x() - pan.x()) * scale),
-                            center_y + static_cast<float>((keyframes_[i].position.z() - pan.y()) * scale));
-            } else if (ortho_idx == 1) {
-                kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.x() - pan.x()) * scale),
-                            center_y - static_cast<float>((keyframes_[i].position.y() - pan.y()) * scale));
-            } else {
-                kp = ImVec2(center_x + static_cast<float>((keyframes_[i].position.z() - pan.x()) * scale),
-                            center_y - static_cast<float>((keyframes_[i].position.y() - pan.y()) * scale));
-            }
+        dragging_camera_ortho_idx_ = -1;
+        dragging_keyframe_ortho_idx_ = -1;
 
-            float d2 = (mouse_pos.x - kp.x) * (mouse_pos.x - kp.x) + (mouse_pos.y - kp.y) * (mouse_pos.y - kp.y);
-            if (d2 <= 144.0f) { // 12 px radius
-                dragging_keyframe_idx_ = static_cast<int>(i);
-                selected_keyframe_idx_ = static_cast<int>(i);
-                break;
-            }
+        if (hovered_ortho_element_[ortho_idx] == -2) {
+            dragging_camera_ortho_idx_ = ortho_idx;
+            is_playing_ = false;
+        } else if (hovered_ortho_element_[ortho_idx] >= 0 && static_cast<size_t>(hovered_ortho_element_[ortho_idx]) < keyframes_.size()) {
+            dragging_keyframe_idx_ = hovered_ortho_element_[ortho_idx];
+            selected_keyframe_idx_ = hovered_ortho_element_[ortho_idx];
+            dragging_keyframe_ortho_idx_ = ortho_idx;
+            is_playing_ = false;
         }
     }
 
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         dragging_keyframe_idx_ = -1;
+        dragging_camera_ortho_idx_ = -1;
+        dragging_keyframe_ortho_idx_ = -1;
     }
 
-    if (dragging_keyframe_idx_ >= 0 && static_cast<size_t>(dragging_keyframe_idx_) < keyframes_.size()) {
+    // Dragging Camera - ONLY execute in the viewport where drag initiated!
+    if (dragging_camera_ortho_idx_ == ortho_idx) {
+        if (ortho_idx == 0) { // Top View: X-Z only! (Y is strictly untouched)
+            camera_pos_.x() += io.MouseDelta.x / scale;
+            camera_pos_.z() += io.MouseDelta.y / scale;
+        } else if (ortho_idx == 1) { // Front View: X-Y only! (Z is strictly untouched)
+            camera_pos_.x() += io.MouseDelta.x / scale;
+            camera_pos_.y() -= io.MouseDelta.y / scale;
+        } else if (ortho_idx == 2) { // Side View: Z-Y only! (X is strictly untouched)
+            camera_pos_.z() += io.MouseDelta.x / scale;
+            camera_pos_.y() -= io.MouseDelta.y / scale;
+        }
+
+        Eigen::Quaterniond q = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
+        Eigen::Vector3d look_dir = q.toRotationMatrix() * Eigen::Vector3d(0, 0, -1);
+        camera_target_ = camera_pos_ + look_dir * orbit_radius_;
+
+        if (selected_keyframe_idx_ >= 0 && static_cast<size_t>(selected_keyframe_idx_) < keyframes_.size()) {
+            auto& kf = keyframes_[selected_keyframe_idx_];
+            if ((camera_pos_ - kf.position).norm() < 0.25) {
+                kf.position = camera_pos_;
+                rebuild_trajectory();
+            }
+        }
+    }
+
+    // Dragging Keyframe - ONLY execute in the viewport where drag initiated!
+    if (dragging_keyframe_ortho_idx_ == ortho_idx && dragging_keyframe_idx_ >= 0 && static_cast<size_t>(dragging_keyframe_idx_) < keyframes_.size()) {
         auto& kf = keyframes_[dragging_keyframe_idx_];
-        if (ortho_idx == 0) {
+        if (ortho_idx == 0) { // Top View: X-Z only!
             kf.position.x() += io.MouseDelta.x / scale;
             kf.position.z() += io.MouseDelta.y / scale;
-        } else if (ortho_idx == 1) {
+        } else if (ortho_idx == 1) { // Front View: X-Y only!
             kf.position.x() += io.MouseDelta.x / scale;
             kf.position.y() -= io.MouseDelta.y / scale;
-        } else {
+        } else if (ortho_idx == 2) { // Side View: Z-Y only!
             kf.position.z() += io.MouseDelta.x / scale;
             kf.position.y() -= io.MouseDelta.y / scale;
+        }
+
+        if (selected_keyframe_idx_ == dragging_keyframe_idx_) {
+            camera_pos_ = kf.position;
+            Eigen::Quaterniond q = euler_deg_to_quat(camera_yaw_deg_, camera_pitch_deg_, camera_roll_deg_);
+            Eigen::Vector3d look_dir = q.toRotationMatrix() * Eigen::Vector3d(0, 0, -1);
+            camera_target_ = camera_pos_ + look_dir * orbit_radius_;
         }
         rebuild_trajectory();
     }
@@ -673,8 +762,14 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     // Draw Keyframe Diamonds & Labels
     for (size_t i = 0; i < keyframes_.size(); ++i) {
         ImVec2 kp = world_to_screen(keyframes_[i].position);
-        float sz = (static_cast<int>(i) == selected_keyframe_idx_) ? 8.0f : 6.0f;
+        bool is_kf_hovered = (hovered_ortho_element_[ortho_idx] == static_cast<int>(i));
+        bool is_kf_dragging = (dragging_keyframe_ortho_idx_ == ortho_idx && dragging_keyframe_idx_ == static_cast<int>(i));
+        float sz = (static_cast<int>(i) == selected_keyframe_idx_ || is_kf_hovered) ? 8.5f : 6.0f;
         ImU32 col = (static_cast<int>(i) == selected_keyframe_idx_) ? IM_COL32(255, 230, 40, 255) : IM_COL32(220, 180, 30, 230);
+
+        if (is_kf_hovered || is_kf_dragging) {
+            draw_list->AddCircle(kp, sz + 4.0f, IM_COL32(255, 230, 40, 180), 16, 1.5f);
+        }
 
         // Diamond vertices
         ImVec2 d_top(kp.x, kp.y - sz);
@@ -687,6 +782,14 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
 
         std::string label = "KF" + std::to_string(i + 1);
         draw_list->AddText(ImVec2(kp.x + sz + 3, kp.y - sz), IM_COL32(255, 255, 255, 200), label.c_str());
+
+        if (is_kf_dragging) {
+            char kbuf[128];
+            std::snprintf(kbuf, sizeof(kbuf), "KF%zu: [%.2f, %.2f, %.2f] m", i + 1, keyframes_[i].position.x(), keyframes_[i].position.y(), keyframes_[i].position.z());
+            ImVec2 txt_sz = ImGui::CalcTextSize(kbuf);
+            draw_list->AddRectFilled(ImVec2(kp.x + 12, kp.y - 20), ImVec2(kp.x + 18 + txt_sz.x, kp.y - 2), IM_COL32(15, 18, 25, 220), 4.0f);
+            draw_list->AddText(ImVec2(kp.x + 15, kp.y - 18), IM_COL32(255, 230, 40, 255), kbuf);
+        }
     }
 
     // Helper lambda to draw dashed line segments
@@ -866,9 +969,23 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
         }
     }
 
-    // Camera center pivot dot
-    draw_list->AddCircleFilled(cam_screen, 4.0f, IM_COL32(255, 255, 255, 255));
-    draw_list->AddCircle(cam_screen, 4.0f, IM_COL32(230, 80, 25, 255), 16, 1.6f);
+    // Camera center pivot dot & interactive ring
+    bool is_cam_hovered = (hovered_ortho_element_[ortho_idx] == -2);
+    bool is_cam_dragging = (dragging_camera_ortho_idx_ == ortho_idx);
+    if (is_cam_hovered || is_cam_dragging) {
+        draw_list->AddCircle(cam_screen, 12.0f, IM_COL32(0, 200, 255, 220), 24, 2.0f);
+        draw_list->AddCircleFilled(cam_screen, 12.0f, IM_COL32(0, 200, 255, 40));
+    }
+    draw_list->AddCircleFilled(cam_screen, is_cam_hovered ? 5.5f : 4.0f, IM_COL32(255, 255, 255, 255));
+    draw_list->AddCircle(cam_screen, is_cam_hovered ? 5.5f : 4.0f, IM_COL32(230, 80, 25, 255), 16, 1.8f);
+
+    if (is_cam_dragging) {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "Cam: [%.2f, %.2f, %.2f] m", camera_pos_.x(), camera_pos_.y(), camera_pos_.z());
+        ImVec2 txt_sz = ImGui::CalcTextSize(buf);
+        draw_list->AddRectFilled(ImVec2(cam_screen.x + 14, cam_screen.y - 20), ImVec2(cam_screen.x + 20 + txt_sz.x, cam_screen.y - 2), IM_COL32(15, 18, 25, 220), 4.0f);
+        draw_list->AddText(ImVec2(cam_screen.x + 17, cam_screen.y - 18), IM_COL32(0, 220, 255, 255), buf);
+    }
 }
 
 bool GuiApp::init() {
@@ -1095,6 +1212,9 @@ bool GuiApp::init() {
 }
 
 void GuiApp::create_gl_textures() {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
     auto create_tex = [](uint32_t w, uint32_t h, const uint8_t* data) -> uint32_t {
         GLuint tex;
         glGenTextures(1, &tex);
@@ -1115,6 +1235,8 @@ void GuiApp::create_gl_textures() {
     sim_aps_texture_id_ = create_tex(sensor_tex_w_, sensor_tex_h_, sim_aps_img_buffer_.data());
 
     for (int i = 0; i < 3; ++i) {
+        ortho_tex_w_[i] = sensor_tex_w_;
+        ortho_tex_h_[i] = sensor_tex_h_;
         if (ortho_img_buffers_[i].size() != sensor_tex_w_ * sensor_tex_h_ * 3) {
             ortho_img_buffers_[i].resize(sensor_tex_w_ * sensor_tex_h_ * 3, 25);
         }
@@ -1123,15 +1245,59 @@ void GuiApp::create_gl_textures() {
     }
 }
 
+void GuiApp::resize_camera_render(uint32_t new_w, uint32_t new_h) {
+    new_w = std::clamp(new_w, 32u, 3840u);
+    new_h = std::clamp(new_h, 32u, 2160u);
+    new_w = (new_w + 3) & ~3u;
+    new_h = (new_h + 1) & ~1u;
+
+    if (new_w == camera_render_w_ && new_h == camera_render_h_) return;
+
+    camera_render_w_ = new_w;
+    camera_render_h_ = new_h;
+
+    if (renderer_) {
+        renderer_->resize_camera(camera_render_w_, camera_render_h_);
+    }
+
+    sensor_img_buffer_.resize(camera_render_w_ * camera_render_h_ * 3, 40);
+    evs_img_buffer_.resize(camera_render_w_ * camera_render_h_ * 3, 20);
+    prev_lum_buffer_.assign(camera_render_w_ * camera_render_h_, 40.0f);
+
+    if (renderer_) {
+        Eigen::Vector3d pos;
+        Eigen::Quaterniond ori;
+        compute_camera_pose(pos, ori);
+        renderer_->set_camera_pose(pos, ori);
+        renderer_->render_frame(sensor_img_buffer_.data(), sensor_img_buffer_.size(), static_cast<uint64_t>(current_time_sec_ * 1e6));
+    }
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    if (sensor_texture_id_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, sensor_texture_id_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera_render_w_, camera_render_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, sensor_img_buffer_.data());
+    }
+    if (evs_texture_id_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, evs_texture_id_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera_render_w_, camera_render_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, evs_img_buffer_.data());
+    }
+    if (orbit_texture_id_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, orbit_texture_id_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera_render_w_, camera_render_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, sensor_img_buffer_.data());
+    }
+}
+
 void GuiApp::update_gl_textures() {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     auto update_tex = [](uint32_t tex_id, uint32_t w, uint32_t h, const uint8_t* data) {
         glBindTexture(GL_TEXTURE_2D, tex_id);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, data);
     };
 
-    update_tex(sensor_texture_id_, sensor_tex_w_, sensor_tex_h_, sensor_img_buffer_.data());
-    update_tex(evs_texture_id_, sensor_tex_w_, sensor_tex_h_, evs_img_buffer_.data());
-    update_tex(orbit_texture_id_, sensor_tex_w_, sensor_tex_h_, sensor_img_buffer_.data());
+    update_tex(sensor_texture_id_, camera_render_w_, camera_render_h_, sensor_img_buffer_.data());
+    update_tex(evs_texture_id_, camera_render_w_, camera_render_h_, evs_img_buffer_.data());
+    update_tex(orbit_texture_id_, camera_render_w_, camera_render_h_, sensor_img_buffer_.data());
     if (sim_aps_texture_id_ != 0) {
         update_tex(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_, sim_aps_img_buffer_.data());
     }
@@ -1413,7 +1579,7 @@ void GuiApp::update_simulation_step(double dt) {
             update_simulated_viewport_buffers();
         } else {
             // Real-time EVS procedural preview fallback
-            for (size_t i = 0; i < sensor_tex_w_ * sensor_tex_h_; ++i) {
+            for (size_t i = 0; i < camera_render_w_ * camera_render_h_; ++i) {
                 size_t idx = i * 3;
                 float r = sensor_img_buffer_[idx];
                 float g = sensor_img_buffer_[idx + 1];
