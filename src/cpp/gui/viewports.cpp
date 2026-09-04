@@ -278,6 +278,11 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
         // Render viewport contents
         switch (viewport_views_[quad_idx]) {
             case ViewportContent::CAMERA_CLEAN: {
+                if (current_mode_ == AppMode::SENSOR_SIMULATION) {
+                    render_aspect_image(sensor_texture_id_, sensor_tex_w_, sensor_tex_h_);
+                    break;
+                }
+
                 if (avail_sz.x > 10.0f && avail_sz.y > 10.0f) {
                     // Full-bleed viewport render (Google Earth Studio / Blender Passepartout style)
                     uint32_t tw = (static_cast<uint32_t>(avail_sz.x) + 3) & ~3u;
@@ -422,22 +427,7 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
                         ImGui::TextDisabled("Capture >= 2 keyframes in Trajectory Studio to bake.");
                     }
                 } else {
-                    if (avail_sz.x > 10.0f && avail_sz.y > 10.0f) {
-                        float tex_aspect = static_cast<float>(sensor_tex_w_) / static_cast<float>(sensor_tex_h_);
-                        float avail_aspect = avail_sz.x / avail_sz.y;
-                        float draw_w = (avail_aspect > tex_aspect) ? (avail_sz.y * tex_aspect) : avail_sz.x;
-                        float draw_h = (avail_aspect > tex_aspect) ? avail_sz.y : (avail_sz.x / tex_aspect);
-
-                        uint32_t tw = (static_cast<uint32_t>(draw_w) + 3) & ~3u;
-                        uint32_t th = (static_cast<uint32_t>(draw_h) + 1) & ~1u;
-
-                        int thresh = (layout_settle_frames_ > 0) ? 0 : 8;
-                        if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > thresh ||
-                            std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > thresh) {
-                            resize_camera_render(tw, th);
-                        }
-                    }
-                    render_aspect_image(evs_texture_id_, camera_render_w_, camera_render_h_);
+                    render_aspect_image(evs_texture_id_, sensor_tex_w_, sensor_tex_h_);
                 }
                 break;
             }
@@ -469,24 +459,62 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
 void GuiApp::render_imu_plots_content() {
     float avail_y = ImGui::GetContentRegionAvail().y;
     float plot_h = std::max(60.0f, (avail_y - 25.0f) * 0.5f);
+    double dur = std::max(0.5, config_.duration_sec);
+
+    const double* t_data = nullptr;
+    const double* gx_data = nullptr;
+    const double* gy_data = nullptr;
+    const double* gz_data = nullptr;
+    const double* ax_data = nullptr;
+    const double* ay_data = nullptr;
+    const double* az_data = nullptr;
+    int count = 0;
+
+    if (!imu_curve_time_.empty()) {
+        t_data = imu_curve_time_.data();
+        gx_data = imu_curve_gyro_x_.data();
+        gy_data = imu_curve_gyro_y_.data();
+        gz_data = imu_curve_gyro_z_.data();
+        ax_data = imu_curve_acc_x_.data();
+        ay_data = imu_curve_acc_y_.data();
+        az_data = imu_curve_acc_z_.data();
+        count = static_cast<int>(imu_curve_time_.size());
+    } else if (!plot_time_.empty()) {
+        t_data = plot_time_.data();
+        gx_data = plot_gyro_x_.data();
+        gy_data = plot_gyro_y_.data();
+        gz_data = plot_gyro_z_.data();
+        ax_data = plot_acc_x_.data();
+        ay_data = plot_acc_y_.data();
+        az_data = plot_acc_z_.data();
+        count = static_cast<int>(plot_time_.size());
+    }
+
+    double cur_t = current_time_sec_;
 
     if (ImPlot::BeginPlot("Gyroscope (rad/s)##imu", ImVec2(-1, plot_h))) {
-        ImPlot::SetupAxes("Time [s]", "rad/s", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        if (!plot_time_.empty()) {
-            ImPlot::PlotLine("Gyro X", plot_time_.data(), plot_gyro_x_.data(), (int)plot_time_.size());
-            ImPlot::PlotLine("Gyro Y", plot_time_.data(), plot_gyro_y_.data(), (int)plot_time_.size());
-            ImPlot::PlotLine("Gyro Z", plot_time_.data(), plot_gyro_z_.data(), (int)plot_time_.size());
+        ImPlot::SetupAxes("Time [s]", "rad/s", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, dur, ImPlotCond_Always);
+        if (count > 0) {
+            ImPlot::PlotLine("Gyro X", t_data, gx_data, count);
+            ImPlot::PlotLine("Gyro Y", t_data, gy_data, count);
+            ImPlot::PlotLine("Gyro Z", t_data, gz_data, count);
         }
+        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.85f, 0.0f, 0.9f), 1.5f);
+        ImPlot::PlotInfLines("##Playhead_g", &cur_t, 1);
         ImPlot::EndPlot();
     }
 
     if (ImPlot::BeginPlot("Accelerometer (m/s^2)##imu", ImVec2(-1, plot_h))) {
-        ImPlot::SetupAxes("Time [s]", "m/s^2", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        if (!plot_time_.empty()) {
-            ImPlot::PlotLine("Acc X", plot_time_.data(), plot_acc_x_.data(), (int)plot_time_.size());
-            ImPlot::PlotLine("Acc Y", plot_time_.data(), plot_acc_y_.data(), (int)plot_time_.size());
-            ImPlot::PlotLine("Acc Z", plot_time_.data(), plot_acc_z_.data(), (int)plot_time_.size());
+        ImPlot::SetupAxes("Time [s]", "m/s^2", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, dur, ImPlotCond_Always);
+        if (count > 0) {
+            ImPlot::PlotLine("Acc X", t_data, ax_data, count);
+            ImPlot::PlotLine("Acc Y", t_data, ay_data, count);
+            ImPlot::PlotLine("Acc Z", t_data, az_data, count);
         }
+        ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.85f, 0.0f, 0.9f), 1.5f);
+        ImPlot::PlotInfLines("##Playhead_a", &cur_t, 1);
         ImPlot::EndPlot();
     }
 }

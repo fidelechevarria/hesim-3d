@@ -109,6 +109,7 @@ GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
 
 void GuiApp::set_spline(const SE3Spline& spline) {
     spline_ = spline;
+    compute_imu_profile_curves();
 }
 
 void GuiApp::capture_keyframe_at_current_time() {
@@ -299,6 +300,47 @@ void GuiApp::rebuild_trajectory() {
             TrajectorySample s = spline_.evaluate(t - t_start);
             path_samples_.push_back(s.position);
         }
+    }
+
+    compute_imu_profile_curves();
+}
+
+void GuiApp::compute_imu_profile_curves() {
+    imu_curve_time_.clear();
+    imu_curve_gyro_x_.clear();
+    imu_curve_gyro_y_.clear();
+    imu_curve_gyro_z_.clear();
+    imu_curve_acc_x_.clear();
+    imu_curve_acc_y_.clear();
+    imu_curve_acc_z_.clear();
+
+    if (keyframes_.size() < 2 || spline_.num_control_points() < 4) {
+        return;
+    }
+
+    int n_pts = 300;
+    double dur = std::max(0.1, config_.duration_sec);
+    double dt_step = dur / static_cast<double>(n_pts - 1);
+    double t_start = keyframes_.empty() ? 0.0 : keyframes_.front().time_sec;
+
+    imu_curve_time_.reserve(n_pts);
+    imu_curve_gyro_x_.reserve(n_pts);
+    imu_curve_gyro_y_.reserve(n_pts);
+    imu_curve_gyro_z_.reserve(n_pts);
+    imu_curve_acc_x_.reserve(n_pts);
+    imu_curve_acc_y_.reserve(n_pts);
+    imu_curve_acc_z_.reserve(n_pts);
+
+    for (int i = 0; i < n_pts; ++i) {
+        double t = std::min(dur, i * dt_step);
+        TrajectorySample s = spline_.evaluate(t - t_start);
+        imu_curve_time_.push_back(t);
+        imu_curve_gyro_x_.push_back(s.angular_velocity_body.x());
+        imu_curve_gyro_y_.push_back(s.angular_velocity_body.y());
+        imu_curve_gyro_z_.push_back(s.angular_velocity_body.z());
+        imu_curve_acc_x_.push_back(s.imu_acceleration.x());
+        imu_curve_acc_y_.push_back(s.imu_acceleration.y());
+        imu_curve_acc_z_.push_back(s.imu_acceleration.z());
     }
 }
 
@@ -1507,6 +1549,7 @@ bool GuiApp::init() {
     if (!config_.trajectory_path.empty()) {
         load_trajectory_from_json(config_.trajectory_path);
     }
+    compute_imu_profile_curves();
 
     is_running_ = true;
     return true;
@@ -1562,8 +1605,10 @@ void GuiApp::resize_camera_render(uint32_t new_w, uint32_t new_h) {
     }
 
     sensor_img_buffer_.resize(camera_render_w_ * camera_render_h_ * 3, 40);
-    evs_img_buffer_.resize(camera_render_w_ * camera_render_h_ * 3, 20);
-    prev_lum_buffer_.assign(camera_render_w_ * camera_render_h_, 40.0f);
+    if (current_mode_ != AppMode::SENSOR_SIMULATION) {
+        evs_img_buffer_.resize(camera_render_w_ * camera_render_h_ * 3, 20);
+        prev_lum_buffer_.assign(camera_render_w_ * camera_render_h_, 40.0f);
+    }
 
     if (renderer_) {
         Eigen::Vector3d pos;
@@ -1579,7 +1624,7 @@ void GuiApp::resize_camera_render(uint32_t new_w, uint32_t new_h) {
         glBindTexture(GL_TEXTURE_2D, sensor_texture_id_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera_render_w_, camera_render_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, sensor_img_buffer_.data());
     }
-    if (evs_texture_id_ != 0) {
+    if (evs_texture_id_ != 0 && current_mode_ != AppMode::SENSOR_SIMULATION) {
         glBindTexture(GL_TEXTURE_2D, evs_texture_id_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera_render_w_, camera_render_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, evs_img_buffer_.data());
     }
@@ -1597,11 +1642,17 @@ void GuiApp::update_gl_textures() {
     };
 
     update_tex(sensor_texture_id_, camera_render_w_, camera_render_h_, sensor_img_buffer_.data());
-    update_tex(evs_texture_id_, camera_render_w_, camera_render_h_, evs_img_buffer_.data());
-    update_tex(orbit_texture_id_, camera_render_w_, camera_render_h_, sensor_img_buffer_.data());
-    if (sim_aps_texture_id_ != 0) {
-        update_tex(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_, sim_aps_img_buffer_.data());
+    if (current_mode_ == AppMode::SENSOR_SIMULATION) {
+        if (evs_texture_id_ != 0 && evs_img_buffer_.size() == sensor_tex_w_ * sensor_tex_h_ * 3) {
+            update_tex(evs_texture_id_, sensor_tex_w_, sensor_tex_h_, evs_img_buffer_.data());
+        }
+        if (sim_aps_texture_id_ != 0) {
+            update_tex(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_, sim_aps_img_buffer_.data());
+        }
+    } else {
+        update_tex(evs_texture_id_, camera_render_w_, camera_render_h_, evs_img_buffer_.data());
     }
+    update_tex(orbit_texture_id_, camera_render_w_, camera_render_h_, sensor_img_buffer_.data());
 }
 
 void GuiApp::set_app_mode(AppMode mode) {
@@ -1618,6 +1669,14 @@ void GuiApp::set_app_mode(AppMode mode) {
     if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
         for (int i = 0; i < 4; ++i) viewport_views_[i] = studio_views_[i];
     } else {
+        // Enforce exact physical sensor resolution in Sensor Simulation mode
+        evs_img_buffer_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 24);
+        if (evs_texture_id_ != 0) {
+            glBindTexture(GL_TEXTURE_2D, evs_texture_id_);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, sensor_tex_w_, sensor_tex_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, evs_img_buffer_.data());
+        }
+        resize_camera_render(sensor_tex_w_, sensor_tex_h_);
+
         for (int i = 0; i < 4; ++i) viewport_views_[i] = sim_views_[i];
         if (simulation_has_data_) {
             update_simulated_viewport_buffers();
@@ -1770,8 +1829,8 @@ void GuiApp::step_simulation_bake() {
             }
 
             // High-rate EVS event emission from sub-samples
-            for (size_t y = 0; y < sensor_tex_h_; y += 2) {
-                for (size_t x = 0; x < sensor_tex_w_; x += 2) {
+            for (size_t y = 0; y < sensor_tex_h_; ++y) {
+                for (size_t x = 0; x < sensor_tex_w_; ++x) {
                     size_t p_idx = (y * sensor_tex_w_ + x);
                     float r = sim_sub_render_buf_[p_idx * 3];
                     float g = sim_sub_render_buf_[p_idx * 3 + 1];

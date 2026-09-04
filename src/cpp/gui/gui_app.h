@@ -240,7 +240,12 @@ private:
 
     std::unique_ptr<FilamentRenderer> renderer_{nullptr};
 
-    // Telemetry history for ImPlot
+    // Telemetry curves for ImPlot
+    std::vector<double> imu_curve_time_;
+    std::vector<double> imu_curve_gyro_x_, imu_curve_gyro_y_, imu_curve_gyro_z_;
+    std::vector<double> imu_curve_acc_x_, imu_curve_acc_y_, imu_curve_acc_z_;
+    void compute_imu_profile_curves();
+
     static constexpr size_t MAX_PLOT_HISTORY = 1000;
     std::vector<double> plot_time_;
     std::vector<double> plot_gyro_x_, plot_gyro_y_, plot_gyro_z_;
