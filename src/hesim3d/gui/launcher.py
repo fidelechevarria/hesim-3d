@@ -30,7 +30,11 @@ def launch_interactive_gui(
     # 2. Configure C++ GUI parameters
     cfg = _CppGuiConfig()
     cfg.scene_path = str(scene_path)
-    cfg.sensor_name = str(sensor_name)
+    try:
+        sensor_cfg = SensorConfig.from_preset(sensor_name)
+        cfg.sensor_name = str(sensor_cfg.name)
+    except Exception:
+        cfg.sensor_name = str(sensor_name)
     cfg.trajectory_path = str(trajectory) if trajectory else ""
     cfg.duration_sec = float(duration_sec)
     cfg.sim_fps = float(sim_fps)

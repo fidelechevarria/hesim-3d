@@ -68,6 +68,18 @@ struct StudioKeyframe {
     Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
 };
 
+struct SensorPresetInfo {
+    std::string id;
+    std::string display_name;
+    std::string description;
+    uint32_t width{640};
+    uint32_t height{480};
+    double fov_deg{65.0};
+    double aps_fps{30.0};
+    double exposure_ms{10.0};
+    bool has_aps{true};
+};
+
 struct GuiConfig {
     std::string scene_path{""};
     std::string sensor_name{"alpsentek_eiger"};
@@ -92,6 +104,14 @@ public:
     void request_close();
 
     void set_spline(const SE3Spline& spline);
+
+    // Sensor Management & Dynamic Optics
+    void init_sensor_presets();
+    bool switch_active_sensor(const std::string& sensor_id);
+    void recompute_sensor_optics();
+    const std::vector<SensorPresetInfo>& get_available_sensors() const { return available_sensors_; }
+    double get_sensor_fps() const { return sensor_fps_; }
+    double get_sensor_fov_deg() const { return sensor_fov_deg_; }
 
     // Keyframe Management (Google Earth Studio Style)
     void capture_keyframe_at_current_time();
@@ -253,6 +273,12 @@ private:
     uint32_t sensor_texture_id_{0};
     uint32_t evs_texture_id_{0};
     uint32_t orbit_texture_id_{0};
+
+    std::vector<SensorPresetInfo> available_sensors_;
+    double sensor_fov_deg_{65.0};
+    double sensor_fps_{30.0};
+    double tan_fov_x_half_{0.63707};
+    double tan_fov_y_half_{0.47780};
 
     uint32_t sensor_tex_w_{640};
     uint32_t sensor_tex_h_{480};

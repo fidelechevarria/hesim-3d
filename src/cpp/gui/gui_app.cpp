@@ -157,10 +157,182 @@ std::string GuiApp::generate_default_dataset_path() const {
     return (std::filesystem::path(get_datasets_dir()) / fname).string();
 }
 
+void GuiApp::init_sensor_presets() {
+    available_sensors_.clear();
+
+    // 1. AlpsenTek Eiger 0.5MP Hybrid APS+EVS
+    available_sensors_.push_back({
+        "alpsentek_eiger",
+        "AlpsenTek Eiger (640x480, 65°)",
+        "AlpsenTek ALVium/Eiger 0.5MP Hybrid Quad-Bayer APS+EVS",
+        640, 480, 65.0, 30.0, 10.0, true
+    });
+
+    // 2. iniVation DAVIS346 Hybrid APS+EVS
+    available_sensors_.push_back({
+        "davis346",
+        "iniVation DAVIS346 (346x260, 60°)",
+        "iniVation DAVIS346 (346x260 Mono APS+EVS)",
+        346, 260, 60.0, 30.0, 10.0, true
+    });
+
+    // 3. Prophesee EVK4 HD Metavision
+    available_sensors_.push_back({
+        "prophesee_evk4",
+        "Prophesee EVK4 (1280x720, 70°)",
+        "Prophesee EVK4 HD Metavision Sensor (1280x720 Mono EVS)",
+        1280, 720, 70.0, 0.0, 0.0, false
+    });
+
+    // 4. Sony IMX636 HD Event Sensor
+    available_sensors_.push_back({
+        "sony_imx636",
+        "Sony IMX636 (1280x720, 70°)",
+        "Sony IMX636 HD Event-Based Vision Sensor (1280x720 Mono EVS)",
+        1280, 720, 70.0, 0.0, 0.0, false
+    });
+
+    // Sync from local JSON presets if present
+    std::filesystem::path preset_dirs[] = {
+        "assets/sensor_presets",
+        "../assets/sensor_presets",
+        "../../assets/sensor_presets",
+        "/home/fidelechevarria/repos/hesim-3d/assets/sensor_presets"
+    };
+    std::filesystem::path resolved_pdir;
+    for (const auto& p : preset_dirs) {
+        if (std::filesystem::exists(p)) {
+            resolved_pdir = p;
+            break;
+        }
+    }
+    if (!resolved_pdir.empty()) {
+        for (auto& preset : available_sensors_) {
+            std::filesystem::path jf = resolved_pdir / (preset.id + ".json");
+            if (std::filesystem::exists(jf)) {
+                try {
+                    std::ifstream in_f(jf);
+                    std::string content((std::istreambuf_iterator<char>(in_f)), std::istreambuf_iterator<char>());
+                    auto extract_d = [&](const std::string& key) -> double {
+                        size_t pos = content.find("\"" + key + "\"");
+                        if (pos == std::string::npos) return -1.0;
+                        size_t colon = content.find(':', pos);
+                        if (colon == std::string::npos) return -1.0;
+                        return std::stod(content.substr(colon + 1));
+                    };
+                    double w = extract_d("width");
+                    double h = extract_d("height");
+                    double fov = extract_d("fov_deg");
+                    double fps = extract_d("aps_fps");
+                    double exp = extract_d("exposure_time_ms");
+                    if (w > 0) preset.width = static_cast<uint32_t>(w);
+                    if (h > 0) preset.height = static_cast<uint32_t>(h);
+                    if (fov > 0) preset.fov_deg = fov;
+                    if (fps >= 0) preset.aps_fps = fps;
+                    if (exp >= 0) preset.exposure_ms = exp;
+                } catch (...) {}
+            }
+        }
+    }
+}
+
+void GuiApp::recompute_sensor_optics() {
+    double half_fov_x_rad = deg_to_rad(sensor_fov_deg_ * 0.5);
+    tan_fov_x_half_ = std::tan(half_fov_x_rad);
+    double aspect = static_cast<double>(sensor_tex_w_) / std::max(1u, sensor_tex_h_);
+    tan_fov_y_half_ = tan_fov_x_half_ / aspect;
+    double fx = (sensor_tex_w_ * 0.5) / tan_fov_x_half_;
+    double fy = fx; // Square pixels
+
+    if (renderer_) {
+        CameraIntrinsics cam;
+        cam.width = sensor_tex_w_;
+        cam.height = sensor_tex_h_;
+        cam.fx = fx;
+        cam.fy = fy;
+        cam.cx = sensor_tex_w_ * 0.5;
+        cam.cy = sensor_tex_h_ * 0.5;
+        cam.near_plane = std::max(0.001, scene_bounds_.radius * 0.005);
+        cam.far_plane = std::max(50.0, scene_bounds_.radius * 35.0);
+        renderer_->set_intrinsics(cam);
+    }
+}
+
+bool GuiApp::switch_active_sensor(const std::string& sensor_id) {
+    if (available_sensors_.empty()) {
+        init_sensor_presets();
+    }
+
+    const SensorPresetInfo* chosen = nullptr;
+    for (const auto& preset : available_sensors_) {
+        if (preset.id == sensor_id) {
+            chosen = &preset;
+            break;
+        }
+    }
+    if (!chosen) {
+        for (const auto& preset : available_sensors_) {
+            if (preset.id.find(sensor_id) != std::string::npos || sensor_id.find(preset.id) != std::string::npos) {
+                chosen = &preset;
+                break;
+            }
+        }
+    }
+    if (!chosen && !available_sensors_.empty()) {
+        chosen = &available_sensors_[0];
+    }
+    if (!chosen) return false;
+
+    config_.sensor_name = chosen->id;
+    sensor_tex_w_ = chosen->width;
+    sensor_tex_h_ = chosen->height;
+    sensor_fov_deg_ = chosen->fov_deg;
+    sensor_fps_ = (chosen->aps_fps > 0.0) ? chosen->aps_fps : 30.0;
+    config_.exposure_ms = (chosen->exposure_ms > 0.0) ? chosen->exposure_ms : 10.0;
+    config_.accumulation_window_ms = 1000.0 / sensor_fps_;
+
+    recompute_sensor_optics();
+
+    // Reallocate simulation and sensor buffers to new resolution
+    sensor_img_buffer_.assign(camera_render_w_ * camera_render_h_ * 3, 40);
+    evs_img_buffer_.assign(camera_render_w_ * camera_render_h_ * 3, 20);
+    prev_lum_buffer_.assign(camera_render_w_ * camera_render_h_, 40.0f);
+    sim_aps_img_buffer_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 20);
+
+    for (int i = 0; i < 3; ++i) {
+        ortho_dirty_[i] = true;
+    }
+
+    if (sim_aps_texture_id_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, sim_aps_texture_id_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, sensor_tex_w_, sensor_tex_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, sim_aps_img_buffer_.data());
+    }
+
+    recording_output_path_ = generate_default_dataset_path();
+    export_modal_h5_path_ = recording_output_path_;
+
+    if (renderer_) {
+        Eigen::Vector3d pos;
+        Eigen::Quaterniond ori;
+        compute_camera_pose(pos, ori);
+        renderer_->set_camera_pose(pos, ori);
+        renderer_->render_frame(sensor_img_buffer_.data(), sensor_img_buffer_.size(), static_cast<uint64_t>(current_time_sec_ * 1e6));
+        if (sensor_texture_id_ != 0) {
+            glBindTexture(GL_TEXTURE_2D, sensor_texture_id_);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, camera_render_w_, camera_render_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, sensor_img_buffer_.data());
+        }
+    }
+
+    std::cout << "[GuiApp] Switched sensor to: " << chosen->id 
+              << " (" << sensor_tex_w_ << "x" << sensor_tex_h_ 
+              << ", FOV=" << sensor_fov_deg_ << " deg, " << sensor_fps_ << " fps)" << std::endl;
+
+    return true;
+}
+
 GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
-    sensor_img_buffer_.resize(sensor_tex_w_ * sensor_tex_h_ * 3, 40);
-    evs_img_buffer_.resize(sensor_tex_w_ * sensor_tex_h_ * 3, 20);
-    prev_lum_buffer_.resize(sensor_tex_w_ * sensor_tex_h_, 40.0f);
+    init_sensor_presets();
+    switch_active_sensor(config_.sensor_name.empty() ? "alpsentek_eiger" : config_.sensor_name);
 
     for (int i = 0; i < 3; ++i) {
         ortho_img_buffers_[i].resize(sensor_tex_w_ * sensor_tex_h_ * 3, 25);
@@ -719,13 +891,9 @@ void GuiApp::compute_optimal_initial_camera() {
     camera_pitch_deg_ = -22.0;
     camera_roll_deg_ = 0.0;
 
-    // Compute required viewing distance D to frame the scene bounding sphere
-    // Intrinsics: fx=400, fy=400, W=640, H=480 -> tan(fov_y/2) = 0.60, tan(fov_x/2) = 0.80
-    double tan_fov_y_half = 0.60;
-    double tan_fov_x_half = 0.80;
-
-    double d_y = (r * 1.25) / tan_fov_y_half;
-    double d_x = (r * 1.25) / tan_fov_x_half;
+    // Compute required viewing distance D to frame the scene bounding sphere using exact sensor FOV
+    double d_y = (r * 1.25) / tan_fov_y_half_;
+    double d_x = (r * 1.25) / tan_fov_x_half_;
     double dist = std::max({d_y, d_x, 0.2});
 
     orbit_radius_ = dist;
@@ -904,13 +1072,9 @@ void GuiApp::frame_ortho_view(int ortho_idx) {
     Eigen::Vector3d right_dir = R * Eigen::Vector3d(1, 0, 0);
     Eigen::Vector3d up_dir = R * Eigen::Vector3d(0, 1, 0);
 
-    float aspect_ratio = static_cast<float>(sensor_tex_w_) / std::max(1.0f, static_cast<float>(sensor_tex_h_));
-    double tan_fov_y_half = 0.60;
-    double tan_fov_x_half = tan_fov_y_half * aspect_ratio;
-
     double f_dist = std::max({orbit_radius_, (camera_pos_ - camera_target_).norm(), 1.0});
-    double fw = f_dist * tan_fov_x_half;
-    double fh = f_dist * tan_fov_y_half;
+    double fw = f_dist * tan_fov_x_half_;
+    double fh = f_dist * tan_fov_y_half_;
     Eigen::Vector3d far_center = camera_pos_ + look_dir * f_dist;
 
     Eigen::Vector3d frustum_pts[4] = {
@@ -1309,15 +1473,11 @@ void GuiApp::draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, f
     // -------------------------------------------------------------------------
     // 1. Realistic 3D Camera Frustum Wireframe Pyramid (Google Earth Studio)
     // -------------------------------------------------------------------------
-    // Camera intrinsics: 640x480, fx=400, fy=400 -> tan(fov_x/2) = 0.8, tan(fov_y/2) = 0.6
-    float aspect_ratio = static_cast<float>(sensor_tex_w_) / std::max(1.0f, static_cast<float>(sensor_tex_h_));
-    double tan_fov_y_half = 0.60;
-    double tan_fov_x_half = tan_fov_y_half * aspect_ratio; // 0.80
-
+    // Exact physical sensor FOV geometry (dynamically matched to active sensor preset)
     double frustum_screen_len = 105.0; // Readable pixel length in viewport
     double frustum_depth_w = frustum_screen_len / std::max(0.001, scale);
-    double frustum_w = frustum_depth_w * tan_fov_x_half;
-    double frustum_h = frustum_depth_w * tan_fov_y_half;
+    double frustum_w = frustum_depth_w * tan_fov_x_half_;
+    double frustum_h = frustum_depth_w * tan_fov_y_half_;
 
     // 4 corners of the far plane in 3D world space
     Eigen::Vector3d far_center = camera_pos_ + look_dir * frustum_depth_w;
@@ -1717,17 +1877,8 @@ bool GuiApp::init() {
                 scene_bounds_ = renderer_->get_scene_bounds();
                 compute_optimal_initial_camera();
 
-                // Configure camera clipping planes dynamically based on scene scale
-                CameraIntrinsics cam;
-                cam.width = sensor_tex_w_;
-                cam.height = sensor_tex_h_;
-                cam.fx = 400.0;
-                cam.fy = 400.0;
-                cam.cx = sensor_tex_w_ * 0.5;
-                cam.cy = sensor_tex_h_ * 0.5;
-                cam.near_plane = std::max(0.001, scene_bounds_.radius * 0.005);
-                cam.far_plane = std::max(50.0, scene_bounds_.radius * 35.0);
-                renderer_->set_intrinsics(cam);
+                // Configure camera clipping planes and intrinsics dynamically based on active sensor FOV and scene scale
+                recompute_sensor_optics();
 
                 for (int i = 0; i < 3; ++i) {
                     frame_ortho_view(i);
@@ -2156,11 +2307,11 @@ void GuiApp::start_simulation_bake() {
     renderer_->resize_camera(sensor_tex_w_, sensor_tex_h_);
 
     double duration = std::max(0.5, config_.duration_sec);
-    int aps_fps = 30;
+    int aps_fps = static_cast<int>(std::round(std::max(1.0, sensor_fps_)));
     sim_total_aps_frames_ = std::max(1, static_cast<int>(duration * aps_fps));
     sim_dt_aps_ = 1.0 / aps_fps;
     sim_exposure_sec_ = config_.exposure_ms / 1000.0;
-    if (sim_exposure_sec_ <= 0.0) sim_exposure_sec_ = 0.015;
+    if (sim_exposure_sec_ <= 0.0) sim_exposure_sec_ = 0.010;
 
     // Sub-sampling configuration according to user preset:
     // Preset 0: 300 Hz (Fast) -> 4 sub-samples per frame (~120-300 Hz)

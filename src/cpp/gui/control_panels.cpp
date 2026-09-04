@@ -163,7 +163,37 @@ void GuiApp::render_header_bar() {
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.4f, 1.0f), ICON_MDI_CAMERA_IRIS " %s", config_.sensor_name.c_str());
+
+            // Interactive Sensor Preset Selector
+            std::string cur_sensor_label = config_.sensor_name;
+            for (const auto& s : available_sensors_) {
+                if (s.id == config_.sensor_name) {
+                    cur_sensor_label = s.display_name;
+                    break;
+                }
+            }
+            ImGui::SetNextItemWidth(225.0f);
+            if (ImGui::BeginCombo("##sensor_preset_combo", (ICON_MDI_CAMERA_IRIS " " + cur_sensor_label).c_str(), ImGuiComboFlags_HeightRegular)) {
+                for (const auto& preset : available_sensors_) {
+                    bool is_selected = (config_.sensor_name == preset.id);
+                    if (ImGui::Selectable(preset.display_name.c_str(), is_selected)) {
+                        if (!is_selected) {
+                            switch_active_sensor(preset.id);
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s\nResolution: %ux%u\nFOV: %.1f deg (H)\nAPS FPS: %.1f Hz\nExposure: %.1f ms",
+                            preset.description.c_str(), preset.width, preset.height, preset.fov_deg, preset.aps_fps, preset.exposure_ms);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Select active camera & event sensor preset (Updates FOV, resolution, and intrinsics)");
+            }
 
             // Nav speed slider
             ImGui::SameLine();
@@ -181,6 +211,9 @@ void GuiApp::render_header_bar() {
                 ImGui::SetCursorPosX(center_offset);
             }
 
+            double step_dt = 1.0 / std::max(1.0, sensor_fps_);
+            int step_ms = static_cast<int>(std::round(step_dt * 1000.0));
+
             // Transport Buttons with Material Design Icons
             if (ImGui::Button(ICON_MDI_PAGE_FIRST "##first", ImVec2(28, 22))) {
                 current_time_sec_ = 0.0;
@@ -191,10 +224,10 @@ void GuiApp::render_header_bar() {
             ImGui::SameLine();
             if (ImGui::Button(ICON_MDI_STEP_BACKWARD "##prev", ImVec2(28, 22))) {
                 is_playing_ = false;
-                current_time_sec_ = std::max(0.0, current_time_sec_ - 1.0 / 30.0);
+                current_time_sec_ = std::max(0.0, current_time_sec_ - step_dt);
                 apply_spline_sample_at(current_time_sec_);
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step backward 1 frame (-33ms)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step backward 1 frame (-%dms)", step_ms);
 
             ImGui::SameLine();
             if (is_playing_) {
@@ -219,16 +252,16 @@ void GuiApp::render_header_bar() {
             ImGui::SameLine();
             if (ImGui::Button(ICON_MDI_STEP_FORWARD "##next", ImVec2(28, 22))) {
                 is_playing_ = false;
-                current_time_sec_ = std::min(config_.duration_sec, current_time_sec_ + 1.0 / 30.0);
+                current_time_sec_ = std::min(config_.duration_sec, current_time_sec_ + step_dt);
                 apply_spline_sample_at(current_time_sec_);
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step forward 1 frame (+33ms)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step forward 1 frame (+%dms)", step_ms);
 
             ImGui::SameLine();
 
             // Render Timecode & Frame Counter in Monospace font for zero width jitter
-            int cur_frame = static_cast<int>(current_time_sec_ * 30.0);
-            int total_frames = static_cast<int>(config_.duration_sec * 30.0);
+            int cur_frame = static_cast<int>(std::round(current_time_sec_ * sensor_fps_));
+            int total_frames = static_cast<int>(std::round(config_.duration_sec * sensor_fps_));
             if (font_mono_) ImGui::PushFont(font_mono_);
             ImGui::Text(ICON_MDI_CLOCK_OUTLINE " %02d:%05.2fs " ICON_MDI_FILMSTRIP " [%d/%d f]",
                         static_cast<int>(current_time_sec_ / 60.0),
@@ -682,14 +715,16 @@ void GuiApp::render_timeline_panel() {
         draw_list->AddLine(ImVec2(ruler_p0.x, ruler_p1.y), ruler_p1, IM_COL32(60, 65, 75, 255));
 
         double view_span = timeline_view_t_max_ - timeline_view_t_min_;
-        int visible_frames = static_cast<int>(view_span * 30.0);
+        int visible_frames = static_cast<int>(view_span * sensor_fps_);
 
         int tick_step = 1;
         int label_step = 5;
         if (visible_frames > 600) {
-            tick_step = 30; label_step = 90;
+            tick_step = static_cast<int>(std::round(sensor_fps_));
+            label_step = static_cast<int>(std::round(sensor_fps_ * 3.0));
         } else if (visible_frames > 250) {
-            tick_step = 15; label_step = 30;
+            tick_step = std::max(1, static_cast<int>(std::round(sensor_fps_ * 0.5)));
+            label_step = static_cast<int>(std::round(sensor_fps_));
         } else if (visible_frames > 90) {
             tick_step = 5; label_step = 15;
         } else if (visible_frames > 40) {
@@ -698,13 +733,13 @@ void GuiApp::render_timeline_panel() {
             tick_step = 1; label_step = 5;
         }
 
-        int start_f = static_cast<int>(std::floor(timeline_view_t_min_ * 30.0));
+        int start_f = static_cast<int>(std::floor(timeline_view_t_min_ * sensor_fps_));
         start_f = (start_f / tick_step) * tick_step;
-        int end_f = static_cast<int>(std::ceil(timeline_view_t_max_ * 30.0)) + tick_step;
+        int end_f = static_cast<int>(std::ceil(timeline_view_t_max_ * sensor_fps_)) + tick_step;
 
         for (int f = start_f; f <= end_f; f += tick_step) {
             if (f < 0) continue;
-            double t = static_cast<double>(f) / 30.0;
+            double t = static_cast<double>(f) / sensor_fps_;
             float tx = time_to_timeline_canvas_x(t, canvas_p0.x, canvas_sz.x);
             if (tx < canvas_p0.x || tx > canvas_p1.x) continue;
 
@@ -800,7 +835,7 @@ void GuiApp::render_timeline_panel() {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
                 double target_t = timeline_canvas_x_to_time(mouse_pos.x, canvas_p0.x, canvas_sz.x);
                 if (!io.KeyShift) {
-                    target_t = std::round(target_t * 30.0) / 30.0; // snap to nearest frame
+                    target_t = std::round(target_t * sensor_fps_) / sensor_fps_; // snap to nearest frame
                 }
                 target_t = std::max(0.0, target_t);
                 keyframes_[dragging_timeline_kf_idx_].time_sec = target_t;
