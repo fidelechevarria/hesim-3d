@@ -188,8 +188,6 @@ void FilamentRenderer::update_camera_projection() {
 void FilamentRenderer::resize_camera(uint32_t width, uint32_t height) {
     if (width < 32) width = 32;
     if (height < 32) height = 32;
-    width = (width + 3) & ~3u;
-    height = (height + 1) & ~1u;
 
     if (width == width_ && height == height_ && swap_chain_) return;
 

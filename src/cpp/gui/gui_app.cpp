@@ -293,11 +293,23 @@ bool GuiApp::switch_active_sensor(const std::string& sensor_id) {
 
     recompute_sensor_optics();
 
+    if (current_mode_ == AppMode::SENSOR_SIMULATION) {
+        camera_render_w_ = sensor_tex_w_;
+        camera_render_h_ = sensor_tex_h_;
+    }
+
     // Reallocate simulation and sensor buffers to new resolution
     sensor_img_buffer_.assign(camera_render_w_ * camera_render_h_ * 3, 40);
-    evs_img_buffer_.assign(camera_render_w_ * camera_render_h_ * 3, 20);
+    evs_img_buffer_.assign(std::max(camera_render_w_ * camera_render_h_, sensor_tex_w_ * sensor_tex_h_) * 3, 20);
     prev_lum_buffer_.assign(camera_render_w_ * camera_render_h_, 40.0f);
     sim_aps_img_buffer_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 20);
+    sim_accum_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0.0f);
+    sim_sub_render_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0);
+    sim_prev_log_lum_.assign(sensor_tex_w_ * sensor_tex_h_, 0.0f);
+
+    simulation_has_data_ = false;
+    sim_aps_frames_.clear();
+    sim_events_.clear();
 
     for (int i = 0; i < 3; ++i) {
         ortho_dirty_[i] = true;
@@ -307,11 +319,16 @@ bool GuiApp::switch_active_sensor(const std::string& sensor_id) {
         glBindTexture(GL_TEXTURE_2D, sim_aps_texture_id_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, sensor_tex_w_, sensor_tex_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, sim_aps_img_buffer_.data());
     }
+    if (evs_texture_id_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, evs_texture_id_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, sensor_tex_w_, sensor_tex_h_, 0, GL_RGB, GL_UNSIGNED_BYTE, evs_img_buffer_.data());
+    }
 
     recording_output_path_ = generate_default_dataset_path();
     export_modal_h5_path_ = recording_output_path_;
 
     if (renderer_) {
+        renderer_->resize_camera(camera_render_w_, camera_render_h_);
         Eigen::Vector3d pos;
         Eigen::Quaterniond ori;
         compute_camera_pose(pos, ori);
@@ -1938,8 +1955,6 @@ void GuiApp::create_gl_textures() {
 void GuiApp::resize_camera_render(uint32_t new_w, uint32_t new_h) {
     new_w = std::clamp(new_w, 32u, 3840u);
     new_h = std::clamp(new_h, 32u, 2160u);
-    new_w = (new_w + 3) & ~3u;
-    new_h = (new_h + 1) & ~1u;
 
     if (new_w == camera_render_w_ && new_h == camera_render_h_) return;
 
