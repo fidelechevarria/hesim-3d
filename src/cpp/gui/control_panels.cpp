@@ -24,15 +24,51 @@ void GuiApp::render_header_bar() {
     bool open = ImGui::Begin("##HeaderBar", nullptr, flags);
     ImGui::PopStyleVar();
 
+    // Global keyboard shortcuts for file actions
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantTextInput) {
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
+            if (io.KeyShift) {
+                prompt_save_trajectory_as();
+            } else if (!current_trajectory_file_.empty()) {
+                if (save_trajectory_to_json(current_trajectory_file_)) {
+                    export_status_msg_ = "Saved trajectory";
+                    export_status_timer_ = 4.0f;
+                }
+            } else {
+                prompt_save_trajectory_as();
+            }
+        } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O)) {
+            prompt_load_trajectory();
+        }
+    }
+
     if (open) {
         if (ImGui::BeginMenuBar()) {
             // 1. File Menu
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE " Save Trajectory (.json)...")) {
-                    save_trajectory_to_json(current_trajectory_file_);
+                if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE " Save Trajectory (.json)", "Ctrl+S")) {
+                    if (current_trajectory_file_.empty()) {
+                        prompt_save_trajectory_as();
+                    } else {
+                        if (save_trajectory_to_json(current_trajectory_file_)) {
+                            export_status_msg_ = "Saved trajectory";
+                            export_status_timer_ = 4.0f;
+                        }
+                    }
                 }
-                if (ImGui::MenuItem(ICON_MDI_FOLDER_OPEN " Load Trajectory (.json)...")) {
-                    load_trajectory_from_json(current_trajectory_file_);
+                if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE_EDIT " Save Trajectory As...", "Ctrl+Shift+S")) {
+                    prompt_save_trajectory_as();
+                }
+                if (ImGui::MenuItem(ICON_MDI_FOLDER_OPEN " Open Trajectory (.json)...", "Ctrl+O")) {
+                    prompt_load_trajectory();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(ICON_MDI_FOLDER " Open Trajectories Folder...")) {
+                    open_trajectories_folder();
+                }
+                if (ImGui::MenuItem(ICON_MDI_FOLDER_TABLE " Open Datasets Folder...")) {
+                    open_datasets_folder();
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem(ICON_MDI_EXIT_TO_APP " Exit")) {
@@ -266,18 +302,19 @@ void GuiApp::render_header_bar() {
 
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.42f, 0.70f, 1.0f));
-                if (ImGui::Button(ICON_MDI_DOWNLOAD " Export (.h5)", ImVec2(125, 22))) {
-                    if (export_simulated_dataset(recording_output_path_)) {
-                        export_status_msg_ = "Saved " + recording_output_path_;
-                        export_status_timer_ = 6.0f;
-                    } else {
-                        export_status_msg_ = "Export failed";
-                        export_status_timer_ = 6.0f;
+                if (ImGui::Button(ICON_MDI_DOWNLOAD " Export (.h5)...", ImVec2(130, 22))) {
+                    if (export_modal_h5_path_.empty()) {
+                        export_modal_h5_path_ = recording_output_path_.empty() ? generate_default_dataset_path() : recording_output_path_;
                     }
+                    try {
+                        std::filesystem::path p(export_modal_h5_path_);
+                        export_modal_traj_path_ = (p.parent_path() / (p.stem().string() + "_trajectory.json")).string();
+                    } catch (...) {}
+                    show_export_modal_ = true;
                 }
                 ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Export full dataset to %s (HDF5 format)", recording_output_path_.c_str());
+                    ImGui::SetTooltip("Configure and export simulated dataset to HDF5 format");
                 }
 
                 if (export_status_timer_ > 0.0f) {
@@ -407,19 +444,54 @@ void GuiApp::render_timeline_panel() {
         }
         ImGui::SameLine();
 
-        ImGui::SetNextItemWidth(130);
-        char file_buf[256];
-        std::strncpy(file_buf, current_trajectory_file_.c_str(), sizeof(file_buf));
-        if (ImGui::InputText("##TrajFile", file_buf, sizeof(file_buf))) {
-            current_trajectory_file_ = file_buf;
+        // Trajectory File Badge & Actions
+        std::string traj_fname = "untitled.json";
+        try {
+            if (!current_trajectory_file_.empty()) {
+                traj_fname = std::filesystem::path(current_trajectory_file_).filename().string();
+            }
+        } catch (...) {}
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.17f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.24f, 0.30f, 1.0f));
+        std::string traj_btn_label = ICON_MDI_FILE_DOCUMENT_OUTLINE " " + traj_fname;
+        if (ImGui::Button(traj_btn_label.c_str(), ImVec2(0, 24))) {
+            prompt_save_trajectory_as();
+        }
+        ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Current Trajectory File:\n%s\n\nClick to Save As...", current_trajectory_file_.c_str());
         }
         ImGui::SameLine();
+
         if (ImGui::Button(ICON_MDI_CONTENT_SAVE " Save", ImVec2(65, 24))) {
-            save_trajectory_to_json(current_trajectory_file_);
+            if (current_trajectory_file_.empty()) {
+                prompt_save_trajectory_as();
+            } else {
+                if (save_trajectory_to_json(current_trajectory_file_)) {
+                    export_status_msg_ = "Saved trajectory";
+                    export_status_timer_ = 4.0f;
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Save trajectory directly to: %s", current_trajectory_file_.c_str());
         }
         ImGui::SameLine();
-        if (ImGui::Button(ICON_MDI_FOLDER_OPEN " Load", ImVec2(65, 24))) {
-            load_trajectory_from_json(current_trajectory_file_);
+
+        if (ImGui::Button(ICON_MDI_CONTENT_SAVE_EDIT " Save As...", ImVec2(88, 24))) {
+            prompt_save_trajectory_as();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Choose destination and save trajectory with native file browser");
+        }
+        ImGui::SameLine();
+
+        if (ImGui::Button(ICON_MDI_FOLDER_OPEN " Open...", ImVec2(75, 24))) {
+            prompt_load_trajectory();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Load trajectory from JSON file with native file browser");
         }
 
         ImGui::Separator();

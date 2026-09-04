@@ -106,6 +106,20 @@ public:
     bool save_trajectory_to_json(const std::string& path);
     bool load_trajectory_from_json(const std::string& path);
 
+    // User Data Paths & Native File Dialogs
+    static std::string get_user_data_dir();
+    static std::string get_trajectories_dir();
+    static std::string get_datasets_dir();
+    static void ensure_data_directories();
+    std::string generate_default_trajectory_path() const;
+    std::string generate_default_dataset_path() const;
+
+    void prompt_save_trajectory_as();
+    void prompt_load_trajectory();
+    void prompt_export_dataset_path();
+    void open_trajectories_folder();
+    void open_datasets_folder();
+
 private:
     GuiConfig config_;
     GLFWwindow* window_{nullptr};
@@ -116,10 +130,18 @@ private:
     std::atomic<bool> is_running_{false};
     std::atomic<bool> is_playing_{false};
     std::atomic<bool> is_recording_{false};
-    std::string recording_output_path_{"recorded_dataset.h5"};
-    std::string current_trajectory_file_{"custom_trajectory.json"};
+    std::string recording_output_path_{""};
+    std::string current_trajectory_file_{""};
+    std::string last_trajectory_dir_{""};
+    std::string last_dataset_dir_{""};
     std::string export_status_msg_{""};
     float export_status_timer_{0.0f};
+
+    // Export Dataset Modal State
+    bool show_export_modal_{false};
+    std::string export_modal_h5_path_{""};
+    std::string export_modal_traj_path_{""};
+    bool export_modal_also_traj_{true};
 
     double current_time_sec_{0.0};
     double playback_speed_{1.0};
@@ -261,6 +283,7 @@ private:
     void render_single_viewport(int quad_idx, const std::string& name, ViewportContent content);
     void render_imu_plots_content();
     void render_simulation_progress_modal();
+    void render_export_dataset_modal();
 
     // 2D Orthographic Draw & Mouse Input Helpers
     void draw_ortho_map(int ortho_idx, ImDrawList* draw_list, float min_x, float min_y, float max_x, float max_y);

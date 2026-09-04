@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "format": "hesim3d_earth_studio_trajectory",
+  "scene": "/home/fidelechevarria/.cache/hesim3d/scenes/chessboard.glb",
+  "duration_sec": 5.0000,
+  "interpolation": "spline_se3",
+  "keyframes": [
+    {
+      "time_sec": 0.0000,
+      "position": [0.2879, 0.3598, 0.6175],
+      "rotation_euler_deg": [25.0000, -22.0000, 0.0000],
+      "orientation_xyzw": [-0.1863, 0.2125, 0.0413, 0.9584]
+    },
+    {
+      "time_sec": 0.5049,
+      "position": [-0.0683, 0.1025, -0.1758],
+      "rotation_euler_deg": [12.7669, -9.3684, 0.0000],
+      "orientation_xyzw": [-0.0812, 0.1108, 0.0091, 0.9905]
+    },
+    {
+      "time_sec": 5.0000,
+      "position": [0.5561, 0.3702, -0.0306],
+      "rotation_euler_deg": [91.0152, -35.3363, 0.0000],
+      "orientation_xyzw": [-0.2127, 0.6797, 0.2165, 0.6678]
+    }
+  ]
+}

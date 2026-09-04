@@ -140,6 +140,7 @@ if(HESIM3D_BUILD_GUI)
         src/cpp/gui/gui_app.cpp
         src/cpp/gui/viewports.cpp
         src/cpp/gui/control_panels.cpp
+        src/cpp/gui/native_dialogs.cpp
     )
 
     set(GUI_LIBS glfw ${CMAKE_DL_LIBS} GL)

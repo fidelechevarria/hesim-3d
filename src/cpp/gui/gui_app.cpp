@@ -17,6 +17,8 @@
 #include <iomanip>
 #include <csignal>
 #include <filesystem>
+#include <ctime>
+#include "native_dialogs.h"
 
 namespace hesim3d {
 
@@ -84,6 +86,77 @@ static Eigen::Vector3d quat_to_euler_deg(const Eigen::Quaterniond& q) {
     return Eigen::Vector3d(rad_to_deg(yaw), rad_to_deg(pitch), rad_to_deg(roll));
 }
 
+static std::string get_clean_scene_name(const std::string& scene_path) {
+    if (scene_path.empty()) return "scene";
+    try {
+        std::filesystem::path p(scene_path);
+        std::string stem = p.stem().string();
+        return stem.empty() ? "scene" : stem;
+    } catch (...) {
+        return "scene";
+    }
+}
+
+static std::string get_current_timestamp_str() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm);
+    return std::string(buf);
+}
+
+std::string GuiApp::get_user_data_dir() {
+    const char* custom_dir = std::getenv("HESIM3D_DATA_DIR");
+    if (custom_dir && custom_dir[0] != '\0') {
+        return std::string(custom_dir);
+    }
+    const char* home = std::getenv("HOME");
+#if defined(_WIN32)
+    if (!home) home = std::getenv("USERPROFILE");
+#endif
+    if (home) {
+        return (std::filesystem::path(home) / ".hesim3d").string();
+    }
+    return "./.hesim3d";
+}
+
+std::string GuiApp::get_trajectories_dir() {
+    return (std::filesystem::path(get_user_data_dir()) / "trajectories").string();
+}
+
+std::string GuiApp::get_datasets_dir() {
+    return (std::filesystem::path(get_user_data_dir()) / "datasets").string();
+}
+
+void GuiApp::ensure_data_directories() {
+    try {
+        std::filesystem::create_directories(get_trajectories_dir());
+        std::filesystem::create_directories(get_datasets_dir());
+    } catch (const std::exception& e) {
+        std::cerr << "[GuiApp] Warning: Failed to create user data directories: " << e.what() << std::endl;
+    }
+}
+
+std::string GuiApp::generate_default_trajectory_path() const {
+    std::string scene = get_clean_scene_name(config_.scene_path);
+    std::string ts = get_current_timestamp_str();
+    std::string fname = "traj_" + scene + "_" + ts + ".json";
+    return (std::filesystem::path(get_trajectories_dir()) / fname).string();
+}
+
+std::string GuiApp::generate_default_dataset_path() const {
+    std::string scene = get_clean_scene_name(config_.scene_path);
+    std::string sensor = config_.sensor_name.empty() ? "sensor" : config_.sensor_name;
+    std::string ts = get_current_timestamp_str();
+    std::string fname = "dataset_" + scene + "_" + sensor + "_" + ts + ".h5";
+    return (std::filesystem::path(get_datasets_dir()) / fname).string();
+}
+
 GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
     sensor_img_buffer_.resize(sensor_tex_w_ * sensor_tex_h_ * 3, 40);
     evs_img_buffer_.resize(sensor_tex_w_ * sensor_tex_h_ * 3, 20);
@@ -105,6 +178,26 @@ GuiApp::GuiApp(const GuiConfig& config) : config_(config) {
     camera_yaw_deg_ = 25.0;
     camera_pitch_deg_ = -22.0;
     camera_roll_deg_ = 0.0;
+
+    // Initialize user data paths and storage
+    ensure_data_directories();
+    last_trajectory_dir_ = get_trajectories_dir();
+    last_dataset_dir_ = get_datasets_dir();
+
+    if (!config_.trajectory_path.empty()) {
+        current_trajectory_file_ = config_.trajectory_path;
+        try {
+            last_trajectory_dir_ = std::filesystem::path(config_.trajectory_path).parent_path().string();
+        } catch (...) {}
+    } else {
+        current_trajectory_file_ = generate_default_trajectory_path();
+    }
+    recording_output_path_ = generate_default_dataset_path();
+    export_modal_h5_path_ = recording_output_path_;
+    try {
+        std::filesystem::path p(export_modal_h5_path_);
+        export_modal_traj_path_ = (p.parent_path() / (p.stem().string() + "_trajectory.json")).string();
+    } catch (...) {}
 }
 
 void GuiApp::set_spline(const SE3Spline& spline) {
@@ -368,7 +461,11 @@ bool GuiApp::save_trajectory_to_json(const std::string& path) {
 
     f << "  ]\n";
     f << "}\n";
-    std::cout << "[GuiApp] Successfully exported trajectory to: " << path << std::endl;
+    current_trajectory_file_ = path;
+    try {
+        last_trajectory_dir_ = std::filesystem::path(path).parent_path().string();
+    } catch (...) {}
+    std::cout << "[GuiApp] Successfully saved trajectory to: " << path << std::endl;
     return true;
 }
 
@@ -432,10 +529,108 @@ bool GuiApp::load_trajectory_from_json(const std::string& path) {
         });
         jump_to_keyframe(0);
         rebuild_trajectory();
+        current_trajectory_file_ = path;
+        try {
+            last_trajectory_dir_ = std::filesystem::path(path).parent_path().string();
+        } catch (...) {}
         std::cout << "[GuiApp] Loaded " << keyframes_.size() << " keyframes from " << path << std::endl;
         return true;
     }
     return false;
+}
+
+void GuiApp::prompt_save_trajectory_as() {
+    std::string dir = last_trajectory_dir_.empty() ? get_trajectories_dir() : last_trajectory_dir_;
+    std::string default_target;
+    try {
+        if (!current_trajectory_file_.empty()) {
+            std::filesystem::path cur_p(current_trajectory_file_);
+            default_target = (std::filesystem::path(dir) / cur_p.filename()).string();
+        } else {
+            default_target = generate_default_trajectory_path();
+        }
+    } catch (...) {
+        default_target = generate_default_trajectory_path();
+    }
+
+    std::string chosen = NativeDialogs::save_file(
+        "Save Trajectory As",
+        default_target,
+        {"Trajectory JSON (*.json)", "*.json", "All Files (*.*)", "*"}
+    );
+
+    if (!chosen.empty()) {
+        if (!chosen.ends_with(".json")) {
+            chosen += ".json";
+        }
+        if (save_trajectory_to_json(chosen)) {
+            export_status_msg_ = "Trajectory saved: " + std::filesystem::path(chosen).filename().string();
+            export_status_timer_ = 5.0f;
+        } else {
+            export_status_msg_ = "Failed to save trajectory";
+            export_status_timer_ = 5.0f;
+        }
+    }
+}
+
+void GuiApp::prompt_load_trajectory() {
+    std::string dir = last_trajectory_dir_.empty() ? get_trajectories_dir() : last_trajectory_dir_;
+
+    std::string chosen = NativeDialogs::open_file(
+        "Load Trajectory JSON",
+        dir,
+        {"Trajectory JSON (*.json)", "*.json", "All Files (*.*)", "*"}
+    );
+
+    if (!chosen.empty()) {
+        if (load_trajectory_from_json(chosen)) {
+            export_status_msg_ = "Loaded: " + std::filesystem::path(chosen).filename().string();
+            export_status_timer_ = 5.0f;
+        } else {
+            export_status_msg_ = "Failed to load trajectory";
+            export_status_timer_ = 5.0f;
+        }
+    }
+}
+
+void GuiApp::prompt_export_dataset_path() {
+    std::string dir = last_dataset_dir_.empty() ? get_datasets_dir() : last_dataset_dir_;
+    std::string def_file = export_modal_h5_path_.empty() ? generate_default_dataset_path() : export_modal_h5_path_;
+    std::string default_target;
+    try {
+        default_target = (std::filesystem::path(dir) / std::filesystem::path(def_file).filename()).string();
+    } catch (...) {
+        default_target = def_file;
+    }
+
+    std::string chosen = NativeDialogs::save_file(
+        "Export Simulated Dataset (HDF5)",
+        default_target,
+        {"HDF5 Files (*.h5 *.hdf5)", "*.h5 *.hdf5", "All Files (*.*)", "*"}
+    );
+
+    if (!chosen.empty()) {
+        if (!chosen.ends_with(".h5") && !chosen.ends_with(".hdf5")) {
+            chosen += ".h5";
+        }
+        export_modal_h5_path_ = chosen;
+        recording_output_path_ = chosen;
+        try {
+            last_dataset_dir_ = std::filesystem::path(chosen).parent_path().string();
+            std::filesystem::path p(chosen);
+            export_modal_traj_path_ = (p.parent_path() / (p.stem().string() + "_trajectory.json")).string();
+        } catch (...) {}
+    }
+}
+
+void GuiApp::open_trajectories_folder() {
+    ensure_data_directories();
+    NativeDialogs::open_in_system_explorer(get_trajectories_dir());
+}
+
+void GuiApp::open_datasets_folder() {
+    ensure_data_directories();
+    NativeDialogs::open_in_system_explorer(get_datasets_dir());
 }
 
 void GuiApp::apply_spline_sample_at(double t) {
@@ -1791,6 +1986,153 @@ void GuiApp::render_simulation_progress_modal() {
     ImGui::End();
 }
 
+void GuiApp::render_export_dataset_modal() {
+    if (!show_export_modal_) return;
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+
+    // Dim background behind modal
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    bg->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 150));
+
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(660, 440), ImGuiCond_Appearing);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin(ICON_MDI_DOWNLOAD " Export Simulated Dataset (HDF5)##ExportModal", &show_export_modal_, flags)) {
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), ICON_MDI_DATABASE_EXPORT " Configure Physical Simulation Dataset Export");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 1. Target HDF5 Path Input + Browse Button
+        ImGui::TextUnformatted("HDF5 File Destination:");
+        char h5_buf[512];
+        std::strncpy(h5_buf, export_modal_h5_path_.c_str(), sizeof(h5_buf));
+        h5_buf[sizeof(h5_buf) - 1] = '\0';
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
+        if (ImGui::InputText("##H5ExportPath", h5_buf, sizeof(h5_buf))) {
+            export_modal_h5_path_ = h5_buf;
+            try {
+                std::filesystem::path p(export_modal_h5_path_);
+                export_modal_traj_path_ = (p.parent_path() / (p.stem().string() + "_trajectory.json")).string();
+            } catch (...) {}
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_MDI_FOLDER_OPEN " Browse...", ImVec2(100, 0))) {
+            prompt_export_dataset_path();
+        }
+
+        ImGui::Spacing();
+
+        // 2. Companion Trajectory Checkbox + Path
+        ImGui::Checkbox(ICON_MDI_VECTOR_POLYLINE " Also export companion camera trajectory (.json)", &export_modal_also_traj_);
+        if (export_modal_also_traj_) {
+            char traj_buf[512];
+            std::strncpy(traj_buf, export_modal_traj_path_.c_str(), sizeof(traj_buf));
+            traj_buf[sizeof(traj_buf) - 1] = '\0';
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
+            if (ImGui::InputText("##TrajCompanionPath", traj_buf, sizeof(traj_buf))) {
+                export_modal_traj_path_ = traj_buf;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_MDI_FOLDER_OPEN " Path...##Traj", ImVec2(100, 0))) {
+                std::string chosen = NativeDialogs::save_file(
+                    "Export Companion Trajectory",
+                    export_modal_traj_path_,
+                    {"Trajectory JSON (*.json)", "*.json", "All Files (*.*)", "*"}
+                );
+                if (!chosen.empty()) {
+                    if (!chosen.ends_with(".json")) chosen += ".json";
+                    export_modal_traj_path_ = chosen;
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 3. Dataset Summary Metrics Box
+        ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.3f, 1.0f), ICON_MDI_INFORMATION_OUTLINE " Dataset Specifications:");
+        ImGui::BeginChild("##ExportSummaryBox", ImVec2(0, 130), true);
+
+        // Calculate approximate size in MB
+        double event_bytes = static_cast<double>(sim_events_.size()) * 16.0;
+        double aps_bytes = static_cast<double>(sim_aps_frames_.size()) * (sensor_tex_w_ * sensor_tex_h_ * 3.0);
+        double est_total_mb = (event_bytes + aps_bytes) / (1024.0 * 1024.0);
+
+        ImGui::Columns(2, "ExportMetricsCols", false);
+        ImGui::SetColumnWidth(0, 310.0f);
+
+        ImGui::Text("Scene:"); ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s", get_clean_scene_name(config_.scene_path).c_str());
+
+        ImGui::Text("Sensor:"); ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%s (%ux%u)", config_.sensor_name.c_str(), sensor_tex_w_, sensor_tex_h_);
+
+        ImGui::Text("Duration:"); ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "%.2f s", config_.duration_sec);
+
+        ImGui::NextColumn();
+
+        ImGui::Text("Total Events:"); ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.95f, 0.6f, 1.0f), "%zu events", sim_events_.size());
+
+        ImGui::Text("APS Frames:"); ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.95f, 0.6f, 1.0f), "%zu frames", sim_aps_frames_.size());
+
+        ImGui::Text("Est. Disk Size:"); ImGui::SameLine();
+        if (est_total_mb >= 1024.0) {
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%.2f GB", est_total_mb / 1024.0);
+        } else {
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%.1f MB", est_total_mb);
+        }
+
+        ImGui::Columns(1);
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+
+        // 4. Action Buttons & Status
+        if (export_status_timer_ > 0.0f) {
+            ImVec4 col = (export_status_msg_.find("failed") != std::string::npos ||
+                          export_status_msg_.find("Failed") != std::string::npos)
+                ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                : ImVec4(0.35f, 1.0f, 0.45f, 1.0f);
+            ImGui::TextColored(col, "%s", export_status_msg_.c_str());
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_MDI_FOLDER " Open Containing Folder")) {
+                try {
+                    std::string folder = std::filesystem::path(export_modal_h5_path_).parent_path().string();
+                    NativeDialogs::open_in_system_explorer(folder);
+                } catch (...) {}
+            }
+        }
+
+        float btn_w = 140.0f;
+        ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - (btn_w * 2 + 10.0f));
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.55f, 0.88f, 1.0f));
+        if (ImGui::Button(ICON_MDI_CHECK " Export Now", ImVec2(btn_w, 28))) {
+            if (export_simulated_dataset(export_modal_h5_path_)) {
+                export_status_msg_ = "Successfully exported to " + std::filesystem::path(export_modal_h5_path_).filename().string();
+                export_status_timer_ = 8.0f;
+            } else {
+                export_status_msg_ = "Export failed. Please check file permissions.";
+                export_status_timer_ = 6.0f;
+            }
+        }
+        ImGui::PopStyleColor(2);
+
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_MDI_CLOSE " Close", ImVec2(btn_w, 28))) {
+            show_export_modal_ = false;
+        }
+    }
+    ImGui::End();
+}
+
 void GuiApp::trigger_hesim_simulation() {
     start_simulation_bake();
 }
@@ -2039,7 +2381,21 @@ void GuiApp::update_simulated_viewport_buffers() {
 
 bool GuiApp::export_simulated_dataset(const std::string& path) {
     if (!simulation_has_data_) return false;
-    save_trajectory_to_json("recorded_trajectory.json");
+
+    // If companion trajectory export is enabled, save trajectory alongside HDF5
+    if (export_modal_also_traj_) {
+        std::string traj_target = export_modal_traj_path_;
+        if (traj_target.empty()) {
+            try {
+                std::filesystem::path p(path);
+                traj_target = (p.parent_path() / (p.stem().string() + "_trajectory.json")).string();
+            } catch (...) {
+                traj_target = generate_default_trajectory_path();
+            }
+        }
+        save_trajectory_to_json(traj_target);
+    }
+
     bool ok = export_simulation_to_hdf5(
         path,
         config_.sensor_name,
@@ -2051,6 +2407,10 @@ bool GuiApp::export_simulated_dataset(const std::string& path) {
         config_.duration_sec
     );
     if (ok) {
+        recording_output_path_ = path;
+        try {
+            last_dataset_dir_ = std::filesystem::path(path).parent_path().string();
+        } catch (...) {}
         std::cout << "[GuiApp] Successfully exported HDF5 dataset ("
                   << sim_events_.size() << " events, "
                   << sim_aps_frames_.size() << " APS frames) to " << path << std::endl;
@@ -2159,6 +2519,7 @@ void GuiApp::render_ui() {
     render_timeline_panel();
     render_header_bar();
     render_simulation_progress_modal();
+    render_export_dataset_modal();
 
     ImGui::Render();
     int display_w, display_h;
