@@ -29,17 +29,17 @@ void GuiApp::render_header_bar() {
     if (!io.WantTextInput) {
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
             if (io.KeyShift) {
-                prompt_save_trajectory_as();
-            } else if (!current_trajectory_file_.empty()) {
-                if (save_trajectory_to_json(current_trajectory_file_)) {
-                    export_status_msg_ = "Saved trajectory";
+                prompt_save_project_as();
+            } else if (!current_project_file_.empty()) {
+                if (save_project_to_json(current_project_file_)) {
+                    export_status_msg_ = "Saved project";
                     export_status_timer_ = 4.0f;
                 }
             } else {
-                prompt_save_trajectory_as();
+                prompt_save_project_as();
             }
         } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O)) {
-            prompt_load_trajectory();
+            prompt_load_project();
         }
     }
 
@@ -47,21 +47,46 @@ void GuiApp::render_header_bar() {
         if (ImGui::BeginMenuBar()) {
             // 1. File Menu
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE " Save Trajectory (.json)", "Ctrl+S")) {
-                    if (current_trajectory_file_.empty()) {
-                        prompt_save_trajectory_as();
+                if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE " Save Project (.hesim)", "Ctrl+S")) {
+                    if (current_project_file_.empty()) {
+                        prompt_save_project_as();
                     } else {
-                        if (save_trajectory_to_json(current_trajectory_file_)) {
-                            export_status_msg_ = "Saved trajectory";
+                        if (save_project_to_json(current_project_file_)) {
+                            export_status_msg_ = "Saved project";
                             export_status_timer_ = 4.0f;
                         }
                     }
                 }
-                if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE_EDIT " Save Trajectory As...", "Ctrl+Shift+S")) {
-                    prompt_save_trajectory_as();
+                if (ImGui::MenuItem(ICON_MDI_CONTENT_SAVE_EDIT " Save Project As...", "Ctrl+Shift+S")) {
+                    prompt_save_project_as();
                 }
-                if (ImGui::MenuItem(ICON_MDI_FOLDER_OPEN " Open Trajectory (.json)...", "Ctrl+O")) {
-                    prompt_load_trajectory();
+                if (ImGui::MenuItem(ICON_MDI_FOLDER_OPEN " Open Project / Trajectory...", "Ctrl+O")) {
+                    prompt_load_project();
+                }
+                if (ImGui::BeginMenu(ICON_MDI_HISTORY " Open Recent Project", !recent_projects_.empty())) {
+                    for (const auto& rp : recent_projects_) {
+                        std::string fname = std::filesystem::path(rp).filename().string();
+                        if (ImGui::MenuItem(fname.c_str(), nullptr)) {
+                            load_project_from_json(rp);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s", rp.c_str());
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::MenuItem(ICON_MDI_RESTORE " Restore Last Session")) {
+                    restore_last_session();
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu(ICON_MDI_EXPORT " Export")) {
+                    if (ImGui::MenuItem(ICON_MDI_VECTOR_CURVE " Export Trajectory Only (.json)...")) {
+                        prompt_save_trajectory_as();
+                    }
+                    if (ImGui::MenuItem(ICON_MDI_DATABASE_EXPORT " Export Simulated Dataset (HDF5)...", nullptr, false, simulation_has_data_)) {
+                        prompt_export_dataset_path();
+                    }
+                    ImGui::EndMenu();
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem(ICON_MDI_FOLDER " Open Trajectories Folder...")) {
@@ -195,11 +220,64 @@ void GuiApp::render_header_bar() {
                 ImGui::SetTooltip("Select active camera & event sensor preset (Updates FOV, resolution, and intrinsics)");
             }
 
+            // Quick-Tuning Popover (Threshold C & Refractory Period)
+            ImGui::SameLine();
+            char tune_btn_label[64];
+            std::snprintf(tune_btn_label, sizeof(tune_btn_label), ICON_MDI_TUNE " C:%.2f | %dus",
+                          config_.event_threshold, config_.refractory_period_us);
+            if (ImGui::Button(tune_btn_label)) {
+                ImGui::OpenPopup("##SensorTuningPopup");
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Low-Level Sensor Tuning\nContrast Threshold: C = %.2f\nRefractory Dead Time: %d us\nClick to adjust parameters",
+                                  config_.event_threshold, config_.refractory_period_us);
+            }
+
+            if (ImGui::BeginPopup("##SensorTuningPopup")) {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_MDI_CAMERA_IRIS " %s Tuning", config_.sensor_name.c_str());
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                // 1. Contrast Threshold
+                ImGui::Text("Contrast Threshold (C):");
+                float c_val = static_cast<float>(config_.event_threshold);
+                ImGui::SetNextItemWidth(210.0f);
+                if (ImGui::SliderFloat("##c_thresh", &c_val, 0.05f, 0.50f, "C = %.2f")) {
+                    config_.event_threshold = static_cast<double>(c_val);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Log-intensity change threshold for event firing [0.05 - 0.50].\nLower values = higher sensitivity & more events.\nHigher values = less noise & fewer events.");
+                }
+
+                // 2. Refractory Period
+                ImGui::Text("Refractory Period (t_refr):");
+                int refr_val = config_.refractory_period_us;
+                ImGui::SetNextItemWidth(210.0f);
+                if (ImGui::SliderInt("##refr_period", &refr_val, 1, 50, "%d us")) {
+                    config_.refractory_period_us = refr_val;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Pixel refractory dead time in microseconds [1 - 50 us].\nCaps maximum physical firing rate of individual pixels (1 / t_refr).\nTypical: 3-5 us (modern Sony/Prophesee), 15-20 us (DAVIS).");
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                if (ImGui::Button(ICON_MDI_RESTORE " Reset to Sensor Defaults", ImVec2(210, 24))) {
+                    reset_sensor_tuning_to_defaults();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Reset C and t_refr to factory defaults for %s", config_.sensor_name.c_str());
+                }
+
+                ImGui::EndPopup();
+            }
+
             // Nav speed slider
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(70);
+            ImGui::SetNextItemWidth(65);
             ImGui::SliderFloat("##nav", &nav_speed_factor_, 0.2f, 4.0f, "%.1fx");
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Navigation sensitivity factor (relative to estimated scene scale)");
@@ -314,7 +392,8 @@ void GuiApp::render_header_bar() {
                         ImGui::SetTooltip("Capture at least 2 keyframes in timeline before baking");
                     }
                 } else if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Bake physical sensor dynamics (multi-exposure blur, noise, microsecond EVS)");
+                    ImGui::SetTooltip("Bake physical sensor dynamics\nSensor: %s\nSensitivity: C = %.2f\nRefractory Dead Time: %d us\nClick to bake",
+                                      config_.sensor_name.c_str(), config_.event_threshold, config_.refractory_period_us);
                 }
             } else {
                 float right_pos = vp->Size.x - 460.0f;

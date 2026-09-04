@@ -22,6 +22,7 @@
   "evs_fps": 1000.0,
   "theta_hw": 0.00075,
   "theta_scale": 1.0,
+  "event_threshold": 0.15,
   "refractory_period_us": 3.0,
   "evs_betas": [
     [

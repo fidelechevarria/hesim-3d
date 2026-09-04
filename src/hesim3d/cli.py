@@ -33,12 +33,14 @@ def create_parser() -> argparse.ArgumentParser:
 
     # 2. gui command
     gui_p = subparsers.add_parser("gui", help="Launch interactive Dear ImGui real-time visualizer")
+    gui_p.add_argument("project", nargs="?", default="", help="Optional project (.hesim) or trajectory (.json) file to load on start")
     gui_p.add_argument("--scene", type=str, default="chessboard", help="3D Scene ID or path (.glb)")
     gui_p.add_argument("--sensor", type=str, default="alpsentek_eiger", help="Sensor preset name")
     gui_p.add_argument("--trajectory", type=str, default="", help="Path to custom trajectory (.json) or preset")
     gui_p.add_argument("--duration", type=float, default=5.0, help="Loop duration in seconds")
     gui_p.add_argument("--fps", type=float, default=1000.0, help="Simulation sampling rate (Hz)")
-    gui_p.add_argument("--threshold", type=float, default=0.20, help="Contrast sensitivity threshold")
+    gui_p.add_argument("--threshold", type=float, default=None, help="Contrast sensitivity threshold (C)")
+    gui_p.add_argument("--refractory", type=int, default=None, help="Pixel refractory period in microseconds (us)")
     gui_p.add_argument("--width", type=int, default=1600, help="Window width")
     gui_p.add_argument("--height", type=int, default=1000, help="Window height")
 
@@ -90,9 +92,11 @@ def handle_gui(args: argparse.Namespace) -> int:
         scene=args.scene,
         sensor_name=args.sensor,
         trajectory=args.trajectory,
+        project=args.project,
         duration_sec=args.duration,
         sim_fps=args.fps,
         event_threshold=args.threshold,
+        refractory_period_us=args.refractory,
         window_width=args.width,
         window_height=args.height,
     )

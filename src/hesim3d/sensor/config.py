@@ -41,6 +41,7 @@ class SensorConfig:
     evs_fps: float = 1000.0         # Intermediate simulation rate (Hz)
     theta_hw: float = 0.75e-3       # Hardware baseline threshold voltage (V)
     theta_scale: float = 1.0        # User sensitivity multiplier
+    event_threshold: float = 0.20   # Log-intensity contrast threshold (C)
     refractory_period_us: float = 10.0 # Pixel refractory dead time (us)
 
     # 6-Parameter EVS Noise Model per CFA channel (betas: [b0, b1, b2, b3, b4, b5])

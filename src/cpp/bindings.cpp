@@ -137,11 +137,13 @@ NB_MODULE(_hesim3d_core, m) {
         .def_rw("scene_path", &hesim3d::GuiConfig::scene_path)
         .def_rw("sensor_name", &hesim3d::GuiConfig::sensor_name)
         .def_rw("trajectory_path", &hesim3d::GuiConfig::trajectory_path)
+        .def_rw("project_path", &hesim3d::GuiConfig::project_path)
         .def_rw("window_width", &hesim3d::GuiConfig::window_width)
         .def_rw("window_height", &hesim3d::GuiConfig::window_height)
         .def_rw("duration_sec", &hesim3d::GuiConfig::duration_sec)
         .def_rw("sim_fps", &hesim3d::GuiConfig::sim_fps)
         .def_rw("event_threshold", &hesim3d::GuiConfig::event_threshold)
+        .def_rw("refractory_period_us", &hesim3d::GuiConfig::refractory_period_us)
         .def_rw("exposure_ms", &hesim3d::GuiConfig::exposure_ms)
         .def_rw("accumulation_window_ms", &hesim3d::GuiConfig::accumulation_window_ms)
         .def_rw("font_dir", &hesim3d::GuiConfig::font_dir);

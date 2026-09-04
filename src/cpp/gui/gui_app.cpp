@@ -40,6 +40,7 @@ static Eigen::Quaterniond euler_deg_to_quat(double yaw_deg, double pitch_deg, do
 }
 
 GuiApp::~GuiApp() {
+    auto_save_session();
     is_running_ = false;
     if (renderer_) {
         renderer_.reset();
@@ -138,6 +139,7 @@ void GuiApp::ensure_data_directories() {
     try {
         std::filesystem::create_directories(get_trajectories_dir());
         std::filesystem::create_directories(get_datasets_dir());
+        std::filesystem::create_directories((std::filesystem::path(get_user_data_dir()) / "projects").string());
     } catch (const std::exception& e) {
         std::cerr << "[GuiApp] Warning: Failed to create user data directories: " << e.what() << std::endl;
     }
@@ -158,6 +160,16 @@ std::string GuiApp::generate_default_dataset_path() const {
     return (std::filesystem::path(get_datasets_dir()) / fname).string();
 }
 
+std::string GuiApp::generate_default_project_path() const {
+    std::string scene = get_clean_scene_name(config_.scene_path);
+    std::string sensor = config_.sensor_name.empty() ? "sensor" : config_.sensor_name;
+    std::string ts = get_current_timestamp_str();
+    std::string fname = "project_" + scene + "_" + sensor + "_" + ts + ".hesim";
+    std::string pdir = (std::filesystem::path(get_user_data_dir()) / "projects").string();
+    try { std::filesystem::create_directories(pdir); } catch (...) {}
+    return (std::filesystem::path(pdir) / fname).string();
+}
+
 void GuiApp::init_sensor_presets() {
     available_sensors_.clear();
 
@@ -166,7 +178,7 @@ void GuiApp::init_sensor_presets() {
         "alpsentek_eiger",
         "AlpsenTek Eiger (640x480, 65°)",
         "AlpsenTek ALVium/Eiger 0.5MP Hybrid Quad-Bayer APS+EVS",
-        640, 480, 65.0, 30.0, 10.0, true
+        640, 480, 65.0, 30.0, 10.0, true, 0.18, 10
     });
 
     // 2. iniVation DAVIS346 Hybrid APS+EVS
@@ -174,7 +186,7 @@ void GuiApp::init_sensor_presets() {
         "davis346",
         "iniVation DAVIS346 (346x260, 60°)",
         "iniVation DAVIS346 (346x260 Mono APS+EVS)",
-        346, 260, 60.0, 30.0, 10.0, true
+        346, 260, 60.0, 30.0, 10.0, true, 0.25, 20
     });
 
     // 3. Prophesee EVK4 HD Metavision
@@ -182,7 +194,7 @@ void GuiApp::init_sensor_presets() {
         "prophesee_evk4",
         "Prophesee EVK4 (1280x720, 70°)",
         "Prophesee EVK4 HD Metavision Sensor (1280x720 Mono EVS)",
-        1280, 720, 70.0, 0.0, 0.0, false
+        1280, 720, 70.0, 0.0, 0.0, false, 0.15, 5
     });
 
     // 4. Sony IMX636 HD Event Sensor
@@ -190,7 +202,7 @@ void GuiApp::init_sensor_presets() {
         "sony_imx636",
         "Sony IMX636 (1280x720, 70°)",
         "Sony IMX636 HD Event-Based Vision Sensor (1280x720 Mono EVS)",
-        1280, 720, 70.0, 0.0, 0.0, false
+        1280, 720, 70.0, 0.0, 0.0, false, 0.15, 3
     });
 
     // Sync from local JSON presets if present
@@ -226,11 +238,15 @@ void GuiApp::init_sensor_presets() {
                     double fov = extract_d("fov_deg");
                     double fps = extract_d("aps_fps");
                     double exp = extract_d("exposure_time_ms");
+                    double eth = extract_d("event_threshold");
+                    double refr = extract_d("refractory_period_us");
                     if (w > 0) preset.width = static_cast<uint32_t>(w);
                     if (h > 0) preset.height = static_cast<uint32_t>(h);
                     if (fov > 0) preset.fov_deg = fov;
                     if (fps >= 0) preset.aps_fps = fps;
                     if (exp >= 0) preset.exposure_ms = exp;
+                    if (eth > 0) preset.default_event_threshold = eth;
+                    if (refr > 0) preset.default_refractory_period_us = static_cast<int>(std::round(refr));
                 } catch (...) {}
             }
         }
@@ -291,6 +307,8 @@ bool GuiApp::switch_active_sensor(const std::string& sensor_id) {
     sensor_fps_ = (chosen->aps_fps > 0.0) ? chosen->aps_fps : 30.0;
     config_.exposure_ms = (chosen->exposure_ms > 0.0) ? chosen->exposure_ms : 10.0;
     config_.accumulation_window_ms = 1000.0 / sensor_fps_;
+    config_.event_threshold = chosen->default_event_threshold;
+    config_.refractory_period_us = chosen->default_refractory_period_us;
 
     recompute_sensor_optics();
 
@@ -307,6 +325,7 @@ bool GuiApp::switch_active_sensor(const std::string& sensor_id) {
     sim_accum_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0.0f);
     sim_sub_render_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0);
     sim_prev_log_lum_.assign(sensor_tex_w_ * sensor_tex_h_, 0.0f);
+    sim_last_event_time_.assign(sensor_tex_w_ * sensor_tex_h_, -1000.0);
 
     simulation_has_data_ = false;
     sim_aps_frames_.clear();
@@ -625,6 +644,209 @@ void GuiApp::compute_imu_profile_curves() {
         imu_curve_acc_y_.push_back(s.imu_acceleration.y());
         imu_curve_acc_z_.push_back(s.imu_acceleration.z());
     }
+}
+
+void GuiApp::reset_sensor_tuning_to_defaults() {
+    for (const auto& preset : available_sensors_) {
+        if (preset.id == config_.sensor_name) {
+            config_.event_threshold = preset.default_event_threshold;
+            config_.refractory_period_us = preset.default_refractory_period_us;
+            export_status_msg_ = "Reset tuning to defaults (" + preset.display_name + ")";
+            export_status_timer_ = 3.0f;
+            break;
+        }
+    }
+}
+
+bool GuiApp::save_project_to_json(const std::string& path) {
+    std::ofstream f(path);
+    if (!f.is_open()) return false;
+
+    f << "{\n";
+    f << "  \"version\": \"2.0\",\n";
+    f << "  \"format\": \"hesim3d_project\",\n";
+    f << "  \"scene\": \"" << config_.scene_path << "\",\n";
+    f << "  \"sensor\": {\n";
+    f << "    \"name\": \"" << config_.sensor_name << "\",\n";
+    f << "    \"event_threshold\": " << std::fixed << std::setprecision(4) << config_.event_threshold << ",\n";
+    f << "    \"refractory_period_us\": " << config_.refractory_period_us << ",\n";
+    f << "    \"sampling_rate_preset\": " << sim_sampling_preset_ << ",\n";
+    f << "    \"exposure_ms\": " << std::fixed << std::setprecision(2) << config_.exposure_ms << ",\n";
+    f << "    \"accumulation_window_ms\": " << std::fixed << std::setprecision(2) << config_.accumulation_window_ms << "\n";
+    f << "  },\n";
+    f << "  \"trajectory\": {\n";
+    f << "    \"duration_sec\": " << std::fixed << std::setprecision(4) << config_.duration_sec << ",\n";
+    f << "    \"interpolation\": \"" << (interp_mode_ == TrajectoryInterpolation::SE3_CUMULATIVE_SPLINE ? "spline_se3" : "linear_slerp") << "\",\n";
+    f << "    \"keyframes\": [\n";
+
+    for (size_t i = 0; i < keyframes_.size(); ++i) {
+        const auto& kf = keyframes_[i];
+        f << "      {\n";
+        f << "        \"time_sec\": " << std::fixed << std::setprecision(4) << kf.time_sec << ",\n";
+        f << "        \"position\": [" << kf.position.x() << ", " << kf.position.y() << ", " << kf.position.z() << "],\n";
+        f << "        \"rotation_euler_deg\": [" << kf.rotation_euler_deg.x() << ", " << kf.rotation_euler_deg.y() << ", " << kf.rotation_euler_deg.z() << "],\n";
+        f << "        \"orientation_xyzw\": [" << kf.orientation.x() << ", " << kf.orientation.y() << ", " << kf.orientation.z() << ", " << kf.orientation.w() << "]\n";
+        f << "      }" << (i + 1 < keyframes_.size() ? "," : "") << "\n";
+    }
+
+    f << "    ]\n";
+    f << "  }\n";
+    f << "}\n";
+
+    current_project_file_ = path;
+    current_trajectory_file_ = path;
+    try {
+        last_project_dir_ = std::filesystem::path(path).parent_path().string();
+    } catch (...) {}
+
+    auto it = std::find(recent_projects_.begin(), recent_projects_.end(), path);
+    if (it != recent_projects_.end()) recent_projects_.erase(it);
+    recent_projects_.insert(recent_projects_.begin(), path);
+    if (recent_projects_.size() > 5) recent_projects_.resize(5);
+
+    std::cout << "[GuiApp] Successfully saved project to: " << path << std::endl;
+    return true;
+}
+
+bool GuiApp::load_project_from_json(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return false;
+
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+    auto extract_str = [&](const std::string& key) -> std::string {
+        size_t p = content.find("\"" + key + "\"");
+        if (p == std::string::npos) return "";
+        size_t colon = content.find(':', p);
+        if (colon == std::string::npos) return "";
+        size_t q1 = content.find('"', colon);
+        if (q1 == std::string::npos) return "";
+        size_t q2 = content.find('"', q1 + 1);
+        if (q2 == std::string::npos) return "";
+        return content.substr(q1 + 1, q2 - q1 - 1);
+    };
+
+    auto extract_d = [&](const std::string& key) -> double {
+        size_t p = content.find("\"" + key + "\"");
+        if (p == std::string::npos) return -999999.0;
+        size_t colon = content.find(':', p);
+        if (colon == std::string::npos) return -999999.0;
+        try {
+            return std::stod(content.substr(colon + 1));
+        } catch (...) {
+            return -999999.0;
+        }
+    };
+
+    // If project format, restore sensor & config
+    std::string format = extract_str("format");
+    if (format == "hesim3d_project") {
+        std::string sensor_name = extract_str("name");
+        if (!sensor_name.empty()) {
+            switch_active_sensor(sensor_name);
+        }
+        double th = extract_d("event_threshold");
+        if (th > 0.0) config_.event_threshold = th;
+        double refr = extract_d("refractory_period_us");
+        if (refr > 0.0) config_.refractory_period_us = static_cast<int>(std::round(refr));
+        double srate = extract_d("sampling_rate_preset");
+        if (srate >= 0.0 && srate <= 2.0) sim_sampling_preset_ = static_cast<int>(srate);
+        double dur = extract_d("duration_sec");
+        if (dur > 0.0) config_.duration_sec = dur;
+        std::string interp = extract_str("interpolation");
+        if (!interp.empty()) {
+            interp_mode_ = (interp == "linear_slerp") ? TrajectoryInterpolation::LINEAR_SLERP : TrajectoryInterpolation::SE3_CUMULATIVE_SPLINE;
+        }
+    }
+
+    bool ok = load_trajectory_from_json(path);
+    if (ok) {
+        current_project_file_ = path;
+        try {
+            last_project_dir_ = std::filesystem::path(path).parent_path().string();
+        } catch (...) {}
+        auto it = std::find(recent_projects_.begin(), recent_projects_.end(), path);
+        if (it != recent_projects_.end()) recent_projects_.erase(it);
+        recent_projects_.insert(recent_projects_.begin(), path);
+        if (recent_projects_.size() > 5) recent_projects_.resize(5);
+        std::cout << "[GuiApp] Successfully loaded project from: " << path << std::endl;
+        return true;
+    }
+    return false;
+}
+
+void GuiApp::prompt_save_project_as() {
+    std::string dir = last_project_dir_.empty() ? get_trajectories_dir() : last_project_dir_;
+    std::string default_target;
+    try {
+        if (!current_project_file_.empty()) {
+            std::filesystem::path cur_p(current_project_file_);
+            default_target = (std::filesystem::path(dir) / cur_p.filename()).string();
+        } else {
+            default_target = generate_default_project_path();
+        }
+    } catch (...) {
+        default_target = generate_default_project_path();
+    }
+
+    std::string chosen = NativeDialogs::save_file(
+        "Save Project As",
+        default_target,
+        {"H-ESIM Project (*.hesim; *.json)", "*.hesim;*.json", "All Files (*.*)", "*"}
+    );
+
+    if (!chosen.empty()) {
+        if (!chosen.ends_with(".hesim") && !chosen.ends_with(".json")) {
+            chosen += ".hesim";
+        }
+        if (save_project_to_json(chosen)) {
+            export_status_msg_ = "Project saved: " + std::filesystem::path(chosen).filename().string();
+            export_status_timer_ = 5.0f;
+        } else {
+            export_status_msg_ = "Failed to save project";
+            export_status_timer_ = 5.0f;
+        }
+    }
+}
+
+void GuiApp::prompt_load_project() {
+    std::string dir = last_project_dir_.empty() ? get_trajectories_dir() : last_project_dir_;
+    std::string chosen = NativeDialogs::open_file(
+        "Open Project or Trajectory",
+        dir,
+        {"H-ESIM Files (*.hesim; *.json)", "*.hesim;*.json", "All Files (*.*)", "*"}
+    );
+
+    if (!chosen.empty()) {
+        if (load_project_from_json(chosen)) {
+            export_status_msg_ = "Loaded: " + std::filesystem::path(chosen).filename().string();
+            export_status_timer_ = 5.0f;
+        } else {
+            export_status_msg_ = "Failed to load project/trajectory";
+            export_status_timer_ = 5.0f;
+        }
+    }
+}
+
+void GuiApp::auto_save_session() {
+    if (keyframes_.size() < 2) return;
+    std::string sess_path = (std::filesystem::path(get_user_data_dir()) / "last_session.hesim").string();
+    save_project_to_json(sess_path);
+    std::cout << "[GuiApp] Auto-saved active session to: " << sess_path << std::endl;
+}
+
+bool GuiApp::restore_last_session() {
+    std::string sess_path = (std::filesystem::path(get_user_data_dir()) / "last_session.hesim").string();
+    if (std::filesystem::exists(sess_path)) {
+        if (load_project_from_json(sess_path)) {
+            export_status_msg_ = "Restored previous session";
+            export_status_timer_ = 4.0f;
+            return true;
+        }
+    }
+    export_status_msg_ = "No saved session found";
+    export_status_timer_ = 3.0f;
+    return false;
 }
 
 bool GuiApp::save_trajectory_to_json(const std::string& path) {
@@ -1909,9 +2131,11 @@ bool GuiApp::init() {
         }
     }
 
-    // Load custom trajectory if specified
-    if (!config_.trajectory_path.empty()) {
-        load_trajectory_from_json(config_.trajectory_path);
+    // Load custom project or trajectory if specified
+    if (!config_.project_path.empty()) {
+        load_project_from_json(config_.project_path);
+    } else if (!config_.trajectory_path.empty()) {
+        load_project_from_json(config_.trajectory_path);
     }
     compute_imu_profile_curves();
 
@@ -2133,9 +2357,10 @@ void GuiApp::render_simulation_progress_modal() {
         ImGui::TextDisabled("%s", sim_status_text_.c_str());
         if (font_mono_) ImGui::PopFont();
 
-        const char* rate_str = (sim_sampling_preset_ == 0) ? "300 Hz (Fast Preview)" :
-                               (sim_sampling_preset_ == 1) ? "1000 Hz (Standard Physical)" : "3200 Hz (HKUST ECCV'26 Benchmark)";
-        ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.78f, 1.0f), ICON_MDI_CHIP " Rate: %s | %zu Events Synthesized", rate_str, sim_events_.size());
+        const char* rate_str = (sim_sampling_preset_ == 0) ? "300 Hz" :
+                               (sim_sampling_preset_ == 1) ? "1000 Hz" : "3200 Hz";
+        ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.78f, 1.0f), ICON_MDI_CHIP " %s | C=%.2f | Refr=%dus | Rate: %s | %zu Events",
+                           config_.sensor_name.c_str(), config_.event_threshold, config_.refractory_period_us, rate_str, sim_events_.size());
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -2348,6 +2573,7 @@ void GuiApp::start_simulation_bake() {
     sim_accum_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0.0f);
     sim_sub_render_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0);
     sim_prev_log_lum_.assign(sensor_tex_w_ * sensor_tex_h_, 0.0f);
+    sim_last_event_time_.assign(sensor_tex_w_ * sensor_tex_h_, -1000.0);
 }
 
 void GuiApp::step_simulation_bake() {
@@ -2360,7 +2586,9 @@ void GuiApp::step_simulation_bake() {
     int frames_per_tick = (sim_sampling_preset_ == 0) ? 2 : 1;
     double duration = std::max(0.5, config_.duration_sec);
     double thr = std::max(0.05, config_.event_threshold);
+    double refr_sec = std::max(1, config_.refractory_period_us) * 1e-6;
     float inv_s = 1.0f / sim_sub_samples_;
+    double sub_dt = sim_dt_aps_ / sim_sub_samples_;
 
     for (int step = 0; step < frames_per_tick && sim_current_frame_ < sim_total_aps_frames_; ++step) {
         if (sim_cancel_requested_) {
@@ -2378,6 +2606,7 @@ void GuiApp::step_simulation_bake() {
             double sample_rel_t = ((s + 0.5) / sim_sub_samples_) * sim_dt_aps_;
             double sub_t = frame_t + sample_rel_t;
             if (sub_t > duration) sub_t = duration;
+            double sub_t_prev = std::max(0.0, sub_t - sub_dt);
 
             TrajectorySample ts = spline_.evaluate(sub_t);
             renderer_->set_camera_pose(ts.position, ts.orientation);
@@ -2408,13 +2637,23 @@ void GuiApp::step_simulation_bake() {
                         if (diff >= thr) {
                             int n_events = static_cast<int>(diff / thr);
                             for (int k = 0; k < n_events; ++k) {
-                                sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
+                                double ev_t = sub_t_prev + ((k + 0.5) / n_events) * sub_dt;
+                                if (ev_t > duration) ev_t = duration;
+                                if (ev_t - sim_last_event_time_[p_idx] >= refr_sec) {
+                                    sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
+                                    sim_last_event_time_[p_idx] = ev_t;
+                                }
                             }
                             sim_prev_log_lum_[p_idx] += n_events * thr;
                         } else if (diff <= -thr) {
                             int n_events = static_cast<int>(-diff / thr);
                             for (int k = 0; k < n_events; ++k) {
-                                sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                                double ev_t = sub_t_prev + ((k + 0.5) / n_events) * sub_dt;
+                                if (ev_t > duration) ev_t = duration;
+                                if (ev_t - sim_last_event_time_[p_idx] >= refr_sec) {
+                                    sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                                    sim_last_event_time_[p_idx] = ev_t;
+                                }
                             }
                             sim_prev_log_lum_[p_idx] -= n_events * thr;
                         }

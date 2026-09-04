@@ -15,9 +15,11 @@ def launch_interactive_gui(
     scene: str = "chessboard",
     sensor_name: str = "alpsentek_eiger",
     trajectory: str = "",
+    project: str = "",
     duration_sec: float = 5.0,
     sim_fps: float = 1000.0,
-    event_threshold: float = 0.20,
+    event_threshold: Optional[float] = None,
+    refractory_period_us: Optional[int] = None,
     window_width: int = 1600,
     window_height: int = 1000,
 ) -> int:
@@ -30,15 +32,31 @@ def launch_interactive_gui(
     # 2. Configure C++ GUI parameters
     cfg = _CppGuiConfig()
     cfg.scene_path = str(scene_path)
+    sensor_cfg = None
     try:
         sensor_cfg = SensorConfig.from_preset(sensor_name)
         cfg.sensor_name = str(sensor_cfg.name)
     except Exception:
         cfg.sensor_name = str(sensor_name)
     cfg.trajectory_path = str(trajectory) if trajectory else ""
+    cfg.project_path = str(project) if project else ""
     cfg.duration_sec = float(duration_sec)
     cfg.sim_fps = float(sim_fps)
-    cfg.event_threshold = float(event_threshold)
+
+    if event_threshold is not None:
+        cfg.event_threshold = float(event_threshold)
+    elif sensor_cfg is not None and hasattr(sensor_cfg, "event_threshold"):
+        cfg.event_threshold = float(getattr(sensor_cfg, "event_threshold", 0.20))
+    else:
+        cfg.event_threshold = 0.20
+
+    if refractory_period_us is not None:
+        cfg.refractory_period_us = int(refractory_period_us)
+    elif sensor_cfg is not None and hasattr(sensor_cfg, "refractory_period_us"):
+        cfg.refractory_period_us = int(round(sensor_cfg.refractory_period_us))
+    else:
+        cfg.refractory_period_us = 10
+
     cfg.window_width = int(window_width)
     cfg.window_height = int(window_height)
 

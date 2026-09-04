@@ -78,17 +78,21 @@ struct SensorPresetInfo {
     double aps_fps{30.0};
     double exposure_ms{10.0};
     bool has_aps{true};
+    double default_event_threshold{0.20};
+    int default_refractory_period_us{10};
 };
 
 struct GuiConfig {
     std::string scene_path{""};
     std::string sensor_name{"alpsentek_eiger"};
     std::string trajectory_path{""};
+    std::string project_path{""};
     uint32_t window_width{1600};
     uint32_t window_height{1000};
     double duration_sec{5.0};
     double sim_fps{1000.0};
     double event_threshold{0.20};
+    int refractory_period_us{10};
     double exposure_ms{10.0};
     double accumulation_window_ms{33.33};
     std::string font_dir{""};
@@ -133,6 +137,20 @@ public:
     static void ensure_data_directories();
     std::string generate_default_trajectory_path() const;
     std::string generate_default_dataset_path() const;
+    std::string generate_default_project_path() const;
+
+    // Sensor Tuning
+    void reset_sensor_tuning_to_defaults();
+
+    // Project State Persistence
+    bool save_project_to_json(const std::string& path);
+    bool load_project_from_json(const std::string& path);
+    void prompt_save_project_as();
+    void prompt_load_project();
+    void auto_save_session();
+    bool restore_last_session();
+    const std::string& get_current_project_file() const { return current_project_file_; }
+    const std::vector<std::string>& get_recent_projects() const { return recent_projects_; }
 
     void prompt_save_trajectory_as();
     void prompt_load_trajectory();
@@ -152,10 +170,14 @@ private:
     std::atomic<bool> is_recording_{false};
     std::string recording_output_path_{""};
     std::string current_trajectory_file_{""};
+    std::string current_project_file_{""};
+    std::vector<std::string> recent_projects_;
     std::string last_trajectory_dir_{""};
     std::string last_dataset_dir_{""};
+    std::string last_project_dir_{""};
     std::string export_status_msg_{""};
     float export_status_timer_{0.0f};
+    bool show_sensor_tuning_popup_{false};
 
     // Export Dataset Modal State
     bool show_export_modal_{false};
@@ -211,6 +233,7 @@ private:
     std::vector<float> sim_accum_buf_;
     std::vector<uint8_t> sim_sub_render_buf_;
     std::vector<float> sim_prev_log_lum_;
+    std::vector<double> sim_last_event_time_;
 
     std::vector<SimulatedApsFrame> sim_aps_frames_;
     std::vector<SimulatedEvent> sim_events_;
