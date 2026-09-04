@@ -2297,12 +2297,12 @@ void GuiApp::render_simulation_progress_modal() {
     bg->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 140));
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(520, 210), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(560, 260), ImGuiCond_Always);
     ImGui::SetNextWindowFocus();
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
-    if (ImGui::Begin("H-ESIM Physics Simulation##Modal", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), ICON_MDI_LIGHTNING_BOLT " Synthesizing Physical Sensor Dynamics...");
+    if (ImGui::Begin("H-ESIM Scientific Physics Simulation##Modal", nullptr, flags)) {
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), ICON_MDI_LIGHTNING_BOLT " Synthesizing Physical Sensor Dynamics (PyTorch CUDA)...");
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -2357,10 +2357,24 @@ void GuiApp::render_simulation_progress_modal() {
         ImGui::TextDisabled("%s", sim_status_text_.c_str());
         if (font_mono_) ImGui::PopFont();
 
+        // Hardware Compute & Physics Badges
+        ImGui::TextColored(ImVec4(0.40f, 0.95f, 0.60f, 1.0f), ICON_MDI_CPU_64_BIT " Compute: %s", sim_device_info_.c_str());
+        ImGui::TextColored(ImVec4(0.70f, 0.85f, 0.98f, 1.0f), ICON_MDI_ATOM " Noise: %s", sim_noise_model_info_.c_str());
+
         const char* rate_str = (sim_sampling_preset_ == 0) ? "300 Hz" :
                                (sim_sampling_preset_ == 1) ? "1000 Hz" : "3200 Hz";
-        ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.78f, 1.0f), ICON_MDI_CHIP " %s | C=%.2f | Refr=%dus | Rate: %s | %zu Events",
-                           config_.sensor_name.c_str(), config_.event_threshold, config_.refractory_period_us, rate_str, sim_events_.size());
+
+        auto now = std::chrono::steady_clock::now();
+        double elapsed_sec = std::chrono::duration<double>(now - sim_bake_start_time_).count();
+        float p = sim_progress_.load();
+        double eta_sec = (p > 0.02f) ? (elapsed_sec / p - elapsed_sec) : 0.0;
+        int el_m = static_cast<int>(elapsed_sec) / 60;
+        int el_s = static_cast<int>(elapsed_sec) % 60;
+        int eta_m = static_cast<int>(eta_sec) / 60;
+        int eta_s = static_cast<int>(eta_sec) % 60;
+
+        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), ICON_MDI_CLOCK_OUTLINE " Elapsed: %02d:%02d | ETA: %02d:%02d | Rate: %s | %zu Events",
+                           el_m, el_s, eta_m, eta_s, rate_str, sim_events_.size());
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -2574,6 +2588,25 @@ void GuiApp::start_simulation_bake() {
     sim_sub_render_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0);
     sim_prev_log_lum_.assign(sensor_tex_w_ * sensor_tex_h_, 0.0f);
     sim_last_event_time_.assign(sensor_tex_w_ * sensor_tex_h_, -1000.0);
+
+    sim_bake_start_time_ = std::chrono::steady_clock::now();
+    if (use_scientific_hesim_) {
+        bool ok = init_scientific_bake_bridge(
+            config_.sensor_name,
+            sensor_tex_w_,
+            sensor_tex_h_,
+            config_.event_threshold,
+            config_.refractory_period_us,
+            sim_device_info_,
+            sim_noise_model_info_
+        );
+        if (!ok) {
+            std::cerr << "[GuiApp] Warning: Scientific H-ESIM init failed, falling back to C++ approximation." << std::endl;
+            use_scientific_hesim_ = false;
+        } else {
+            std::cout << "[GuiApp] Initialized Scientific H-ESIM on " << sim_device_info_ << std::endl;
+        }
+    }
 }
 
 void GuiApp::step_simulation_bake() {
@@ -2590,6 +2623,68 @@ void GuiApp::step_simulation_bake() {
     float inv_s = 1.0f / sim_sub_samples_;
     double sub_dt = sim_dt_aps_ / sim_sub_samples_;
 
+    // =========================================================================
+    // Scientific H-ESIM (PyTorch / CUDA) Execution Path
+    // =========================================================================
+    if (use_scientific_hesim_) {
+        for (int step = 0; step < frames_per_tick && sim_current_frame_ < sim_total_aps_frames_; ++step) {
+            if (sim_cancel_requested_) {
+                cancel_simulation_bake();
+                return;
+            }
+
+            int f = sim_current_frame_;
+            double frame_t = f * sim_dt_aps_;
+
+            sim_batch_render_buf_.resize(sim_sub_samples_ * sensor_tex_w_ * sensor_tex_h_ * 3);
+            sim_sub_timestamps_us_.resize(sim_sub_samples_);
+
+            for (int s = 0; s < sim_sub_samples_; ++s) {
+                double sample_rel_t = ((s + 0.5) / sim_sub_samples_) * sim_dt_aps_;
+                double sub_t = frame_t + sample_rel_t;
+                if (sub_t > duration) sub_t = duration;
+                uint64_t sub_t_us = static_cast<uint64_t>(sub_t * 1e6);
+                sim_sub_timestamps_us_[s] = sub_t_us;
+
+                TrajectorySample ts = spline_.evaluate(sub_t);
+                renderer_->set_camera_pose(ts.position, ts.orientation);
+                uint8_t* dst = sim_batch_render_buf_.data() + s * (sensor_tex_w_ * sensor_tex_h_ * 3);
+                renderer_->render_frame(dst, sensor_tex_w_ * sensor_tex_h_ * 3, sub_t_us);
+            }
+
+            std::vector<SimulatedEvent> frame_events;
+            std::vector<uint8_t> blurred_aps_frame;
+            uint64_t shutter_us = static_cast<uint64_t>(sim_exposure_sec_ * 1e6);
+
+            bool step_ok = step_scientific_bake_bridge(
+                sim_batch_render_buf_.data(),
+                sim_batch_render_buf_.size(),
+                sim_sub_timestamps_us_,
+                shutter_us,
+                frame_events,
+                blurred_aps_frame
+            );
+
+            if (step_ok) {
+                sim_events_.insert(sim_events_.end(), frame_events.begin(), frame_events.end());
+                sim_aps_frames_.push_back({frame_t, std::move(blurred_aps_frame)});
+            }
+            sim_current_frame_++;
+        }
+
+        sim_progress_ = static_cast<float>(sim_current_frame_) / static_cast<float>(sim_total_aps_frames_);
+        sim_status_text_ = "PyTorch CUDA: Frame " + std::to_string(sim_current_frame_) + " / " +
+                           std::to_string(sim_total_aps_frames_) + " (" + std::to_string(sim_events_.size()) + " physical events)...";
+
+        if (sim_current_frame_ >= sim_total_aps_frames_) {
+            finalize_simulation_bake();
+        }
+        return;
+    }
+
+    // =========================================================================
+    // Fast Preview (C++ Approximation) Fallback Path
+    // =========================================================================
     for (int step = 0; step < frames_per_tick && sim_current_frame_ < sim_total_aps_frames_; ++step) {
         if (sim_cancel_requested_) {
             cancel_simulation_bake();
@@ -2696,6 +2791,9 @@ void GuiApp::step_simulation_bake() {
 void GuiApp::cancel_simulation_bake() {
     is_simulating_ = false;
     sim_cancel_requested_ = false;
+    if (use_scientific_hesim_) {
+        reset_scientific_bake_bridge();
+    }
     if (sim_saved_cam_w_ > 0 && sim_saved_cam_h_ > 0 && renderer_) {
         resize_camera_render(sim_saved_cam_w_, sim_saved_cam_h_);
     }

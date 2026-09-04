@@ -235,6 +235,14 @@ private:
     std::vector<float> sim_prev_log_lum_;
     std::vector<double> sim_last_event_time_;
 
+    // Scientific PyTorch / CUDA Engine state
+    bool use_scientific_hesim_{true};
+    std::string sim_device_info_{"Detecting GPU/CUDA..."};
+    std::string sim_noise_model_info_{"H-ESIM 6-Beta CFA Tensors + Poisson-Gaussian + Dark Current"};
+    std::vector<uint8_t> sim_batch_render_buf_;
+    std::vector<uint64_t> sim_sub_timestamps_us_;
+    std::chrono::steady_clock::time_point sim_bake_start_time_;
+
     std::vector<SimulatedApsFrame> sim_aps_frames_;
     std::vector<SimulatedEvent> sim_events_;
     uint32_t sim_aps_texture_id_{0};
@@ -373,5 +381,25 @@ bool export_simulation_to_hdf5(
     const SE3Spline& spline,
     double duration_sec
 );
+
+bool init_scientific_bake_bridge(
+    const std::string& sensor_name,
+    int width, int height,
+    double event_threshold,
+    int refractory_period_us,
+    std::string& out_device_name,
+    std::string& out_model_info
+);
+
+bool step_scientific_bake_bridge(
+    const uint8_t* sub_frames_data,
+    size_t total_bytes,
+    const std::vector<uint64_t>& sub_timestamps_us,
+    uint64_t shutter_duration_us,
+    std::vector<SimulatedEvent>& out_events,
+    std::vector<uint8_t>& out_aps_frame
+);
+
+void reset_scientific_bake_bridge();
 
 } // namespace hesim3d

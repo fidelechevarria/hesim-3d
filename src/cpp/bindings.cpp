@@ -151,6 +151,29 @@ NB_MODULE(_hesim3d_core, m) {
     m.def("launch_gui", &hesim3d::launch_gui, "config"_a,
           nb::call_guard<nb::gil_scoped_release>(),
           "Launch interactive Dear ImGui desktop visualizer");
+
+    m.def("_test_cpp_scientific_bake_roundtrip", [](const std::string& sensor_name, int w, int h) {
+        std::string dev, model;
+        bool init_ok = hesim3d::init_scientific_bake_bridge(sensor_name, w, h, 0.20, 10, dev, model);
+        if (!init_ok) return false;
+
+        std::vector<uint8_t> dummy_frames(w * h * 3 * 2, 128);
+        std::vector<uint64_t> ts = {0, 5000};
+        std::vector<hesim3d::SimulatedEvent> events;
+        std::vector<uint8_t> aps_frame;
+
+        bool step_ok = hesim3d::step_scientific_bake_bridge(
+            dummy_frames.data(),
+            dummy_frames.size(),
+            ts,
+            5000,
+            events,
+            aps_frame
+        );
+
+        hesim3d::reset_scientific_bake_bridge();
+        return step_ok && aps_frame.size() == static_cast<size_t>(w * h * 3);
+    }, "sensor_name"_a, "w"_a, "h"_a);
 #endif
 }
 
@@ -252,6 +275,93 @@ bool export_simulation_to_hdf5(
     } catch (const std::exception& e) {
         std::cerr << "[GuiApp] Failed to export HDF5 dataset: " << e.what() << std::endl;
         return false;
+    }
+}
+
+bool init_scientific_bake_bridge(
+    const std::string& sensor_name,
+    int width, int height,
+    double event_threshold,
+    int refractory_period_us,
+    std::string& out_device_name,
+    std::string& out_model_info
+) {
+    try {
+        nb::gil_scoped_acquire gil;
+        nb::object bake_mod = nb::module_::import_("hesim3d.sensor.scientific_bake");
+        nb::object init_fn = bake_mod.attr("init_scientific_engine");
+        nb::tuple res = nb::cast<nb::tuple>(init_fn(
+            sensor_name,
+            width,
+            height,
+            event_threshold,
+            refractory_period_us
+        ));
+        out_device_name = nb::cast<std::string>(res[0]);
+        out_model_info = nb::cast<std::string>(res[1]);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[ScientificBake] Failed to initialize engine: " << e.what() << std::endl;
+        out_device_name = "CPU (Fallback)";
+        out_model_info = "Error initializing PyTorch engine";
+        return false;
+    }
+}
+
+bool step_scientific_bake_bridge(
+    const uint8_t* sub_frames_data,
+    size_t total_bytes,
+    const std::vector<uint64_t>& sub_timestamps_us,
+    uint64_t shutter_duration_us,
+    std::vector<SimulatedEvent>& out_events,
+    std::vector<uint8_t>& out_aps_frame
+) {
+    try {
+        nb::gil_scoped_acquire gil;
+        nb::object bake_mod = nb::module_::import_("hesim3d.sensor.scientific_bake");
+        nb::object step_fn = bake_mod.attr("step_scientific_engine");
+
+        nb::bytes py_bytes(sub_frames_data, total_bytes);
+        nb::object res = step_fn(py_bytes, sub_timestamps_us, shutter_duration_us);
+        nb::tuple tuple_res = nb::cast<nb::tuple>(res);
+
+        std::vector<uint64_t> ev_t = nb::cast<std::vector<uint64_t>>(tuple_res[0]);
+        std::vector<uint16_t> ev_x = nb::cast<std::vector<uint16_t>>(tuple_res[1]);
+        std::vector<uint16_t> ev_y = nb::cast<std::vector<uint16_t>>(tuple_res[2]);
+        std::vector<int8_t> ev_p = nb::cast<std::vector<int8_t>>(tuple_res[3]);
+        nb::bytes blurred_bytes = nb::cast<nb::bytes>(tuple_res[4]);
+
+        size_t n_ev = ev_t.size();
+        out_events.clear();
+        out_events.reserve(n_ev);
+        for (size_t i = 0; i < n_ev; ++i) {
+            out_events.push_back({
+                static_cast<double>(ev_t[i]) * 1e-6,
+                ev_x[i],
+                ev_y[i],
+                ev_p[i]
+            });
+        }
+
+        const char* b_data = blurred_bytes.c_str();
+        size_t b_len = blurred_bytes.size();
+        out_aps_frame.assign(reinterpret_cast<const uint8_t*>(b_data), reinterpret_cast<const uint8_t*>(b_data) + b_len);
+
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[ScientificBake] Simulation step error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void reset_scientific_bake_bridge() {
+    try {
+        nb::gil_scoped_acquire gil;
+        nb::object bake_mod = nb::module_::import_("hesim3d.sensor.scientific_bake");
+        nb::object reset_fn = bake_mod.attr("reset_scientific_engine");
+        reset_fn();
+    } catch (const std::exception& e) {
+        std::cerr << "[ScientificBake] Reset error: " << e.what() << std::endl;
     }
 }
 

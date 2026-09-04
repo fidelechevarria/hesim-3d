@@ -263,6 +263,13 @@ void GuiApp::render_header_bar() {
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Spacing();
+
+                ImGui::Checkbox(ICON_MDI_CPU_64_BIT " Scientific H-ESIM (PyTorch / CUDA)", &use_scientific_hesim_);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("When checked, uses the authentic PyTorch/CUDA engine with calibrated\n6-parameter CFA beta noise tensors and Gaussian Q-function firing.\nWhen unchecked, uses fast C++ approximation.");
+                }
+
+                ImGui::Spacing();
                 if (ImGui::Button(ICON_MDI_RESTORE " Reset to Sensor Defaults", ImVec2(210, 24))) {
                     reset_sensor_tuning_to_defaults();
                 }
@@ -392,7 +399,8 @@ void GuiApp::render_header_bar() {
                         ImGui::SetTooltip("Capture at least 2 keyframes in timeline before baking");
                     }
                 } else if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Bake physical sensor dynamics\nSensor: %s\nSensitivity: C = %.2f\nRefractory Dead Time: %d us\nClick to bake",
+                    ImGui::SetTooltip("Bake physical sensor dynamics\nEngine: %s\nSensor: %s\nSensitivity: C = %.2f\nRefractory Dead Time: %d us\nClick to bake",
+                                      use_scientific_hesim_ ? "Scientific H-ESIM (PyTorch / CUDA)" : "Fast Preview (C++)",
                                       config_.sensor_name.c_str(), config_.event_threshold, config_.refractory_period_us);
                 }
             } else {

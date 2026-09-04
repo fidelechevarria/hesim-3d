@@ -89,8 +89,12 @@ class Simulator:
             else:
                 writer = HDF5DatasetWriter(out_p, self.sensor_config)
 
-        # APS frame interval
+        # APS frame interval and optical shutter steps
         aps_interval_steps = max(1, int(sim_fps / self.sensor_config.aps_fps)) if self.sensor_config.aps_fps > 0 else 0
+        exposure_sec = max(1e-4, self.sensor_config.exposure_time_ms / 1000.0) if self.sensor_config.exposure_time_ms > 0 else dt_sec
+        aps_shutter_steps = max(1, min(aps_interval_steps, int(round(exposure_sec * sim_fps)))) if aps_interval_steps > 0 else 0
+        aps_accum_raw = np.zeros((self.sensor_config.height, self.sensor_config.width), dtype=np.float32)
+        aps_accum_count = 0
 
         # Memory buffer for Filament render readback
         rgb_frame = np.empty((self.sensor_config.height, self.sensor_config.width, 3), dtype=np.uint8)
@@ -140,11 +144,27 @@ class Simulator:
                     writer.write_imu(t_us, meas_gyro, meas_accel)
                     writer.write_ground_truth_pose(t_us, sample.position, sample.orientation_xyzw)
 
-                # 6. Save APS exposure frame if interval reached
-                if aps_interval_steps > 0 and (step % aps_interval_steps == 0):
-                    total_frames_generated += 1
-                    if writer is not None:
-                        writer.write_frame(rgb_frame, t_us)
+                # 6. Accumulate optical exposure across shutter window for physical motion blur
+                if aps_interval_steps > 0:
+                    sub_idx = step % aps_interval_steps
+                    if sub_idx == 0:
+                        aps_accum_raw = np.zeros((self.sensor_config.height, self.sensor_config.width), dtype=np.float32)
+                        aps_accum_count = 0
+
+                    if sub_idx < aps_shutter_steps:
+                        aps_accum_raw += raw_mosaic
+                        aps_accum_count += 1
+
+                    if sub_idx == (aps_shutter_steps - 1) or step == (total_steps - 1):
+                        total_frames_generated += 1
+                        if aps_accum_count > 0:
+                            mean_raw = aps_accum_raw / aps_accum_count
+                            blurred_rgb = self.isp.raw_to_rgb_preview(mean_raw)
+                        else:
+                            blurred_rgb = rgb_frame.copy()
+
+                        if writer is not None:
+                            writer.write_frame(blurred_rgb, t_us)
 
                 bar.update(1)
 
