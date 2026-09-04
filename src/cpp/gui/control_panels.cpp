@@ -202,23 +202,50 @@ void GuiApp::render_header_bar() {
 
             // Right side: Action controls per mode
             if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
-                float right_pos = vp->Size.x - 260.0f;
+                float right_width = 390.0f;
+                if (simulation_has_data_ && trajectory_dirty_since_sim_) right_width += 85.0f;
+
+                float right_pos = vp->Size.x - right_width;
                 if (right_pos > ImGui::GetCursorPosX()) {
                     ImGui::SetCursorPosX(right_pos);
                 }
-                bool can_sim = (keyframes_.size() >= 2);
+
+                // Intermediate physical simulation sampling rate presets
+                const char* rate_items[] = {
+                    ICON_MDI_FLASH " 300 Hz (Fast)",
+                    ICON_MDI_COG " 1000 Hz (Std)",
+                    ICON_MDI_CUBE_SCAN " 3200 Hz (HKUST)"
+                };
+                ImGui::SetNextItemWidth(145);
+                ImGui::Combo("##SimRateCombo", &sim_sampling_preset_, rate_items, 3);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Intermediate physical sampling rate for motion blur & microsecond EVS");
+                }
+
+                ImGui::SameLine();
+                if (simulation_has_data_ && trajectory_dirty_since_sim_) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.22f, 1.0f), ICON_MDI_ALERT_CIRCLE " Re-bake");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Trajectory keyframes changed since previous bake. Re-baking recommended.");
+                    }
+                    ImGui::SameLine();
+                }
+
+                bool can_sim = (keyframes_.size() >= 2) && !is_simulating_;
                 if (!can_sim) ImGui::BeginDisabled();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.48f, 0.38f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.62f, 0.48f, 1.0f));
-                if (ImGui::Button(ICON_MDI_ROCKET_LAUNCH " Run H-ESIM Simulation", ImVec2(245, 22))) {
-                    trigger_hesim_simulation();
+                if (ImGui::Button(ICON_MDI_ROCKET_LAUNCH " Bake Simulation", ImVec2(165, 22))) {
+                    start_simulation_bake();
                 }
                 ImGui::PopStyleColor(2);
                 if (!can_sim) {
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                        ImGui::SetTooltip("Capture at least 2 keyframes in timeline before simulation");
+                        ImGui::SetTooltip("Capture at least 2 keyframes in timeline before baking");
                     }
+                } else if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Bake physical sensor dynamics (multi-exposure blur, noise, microsecond EVS)");
                 }
             } else {
                 float right_pos = vp->Size.x - 460.0f;
@@ -228,6 +255,15 @@ void GuiApp::render_header_bar() {
                 if (font_mono_) ImGui::PushFont(font_mono_);
                 ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.55f, 1.0f), ICON_MDI_LIGHTNING_BOLT " %zu Evts  " ICON_MDI_IMAGE_MULTIPLE " %zu F", sim_total_events_, sim_total_frames_);
                 if (font_mono_) ImGui::PopFont();
+
+                if (trajectory_dirty_since_sim_) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.22f, 1.0f), ICON_MDI_ALERT_CIRCLE " Outdated");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Trajectory modified. Return to Studio to re-bake with new keyframes.");
+                    }
+                }
+
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.42f, 0.70f, 1.0f));
                 if (ImGui::Button(ICON_MDI_DOWNLOAD " Export (.h5)", ImVec2(125, 22))) {
@@ -289,32 +325,39 @@ void GuiApp::render_timeline_panel() {
 
     if (ImGui::Begin("##EarthStudioTimeline", nullptr, flags)) {
         // Toolbar inside timeline
-        if (ImGui::Button(ICON_MDI_KEY_PLUS " Capture", ImVec2(100, 24))) {
-            capture_keyframe_at_current_time();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture camera pose at current time (K)");
-        ImGui::SameLine();
+        if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
+            if (ImGui::Button(ICON_MDI_KEY_PLUS " Capture", ImVec2(100, 24))) {
+                capture_keyframe_at_current_time();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture camera pose at current time (K)");
+            ImGui::SameLine();
 
-        if (ImGui::Button(ICON_MDI_SKIP_PREVIOUS "##prevkf", ImVec2(28, 24))) {
-            jump_to_prev_keyframe();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to previous keyframe (J)");
-        ImGui::SameLine();
+            if (ImGui::Button(ICON_MDI_SKIP_PREVIOUS "##prevkf", ImVec2(28, 24))) {
+                jump_to_prev_keyframe();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to previous keyframe (J)");
+            ImGui::SameLine();
 
-        if (ImGui::Button(ICON_MDI_SKIP_NEXT "##nextkf", ImVec2(28, 24))) {
-            jump_to_next_keyframe();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to next keyframe (L)");
-        ImGui::SameLine();
+            if (ImGui::Button(ICON_MDI_SKIP_NEXT "##nextkf", ImVec2(28, 24))) {
+                jump_to_next_keyframe();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump to next keyframe (L)");
+            ImGui::SameLine();
 
-        bool can_delete = (selected_keyframe_idx_ >= 0 && selected_keyframe_idx_ < static_cast<int>(keyframes_.size()));
-        if (!can_delete) ImGui::BeginDisabled();
-        if (ImGui::Button(ICON_MDI_TRASH_CAN_OUTLINE " Delete", ImVec2(80, 24))) {
-            delete_keyframe(selected_keyframe_idx_);
+            bool can_delete = (selected_keyframe_idx_ >= 0 && selected_keyframe_idx_ < static_cast<int>(keyframes_.size()));
+            if (!can_delete) ImGui::BeginDisabled();
+            if (ImGui::Button(ICON_MDI_TRASH_CAN_OUTLINE " Delete", ImVec2(80, 24))) {
+                delete_keyframe(selected_keyframe_idx_);
+            }
+            if (!can_delete) ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete selected keyframe (Del / Backspace)");
+            ImGui::SameLine();
+        } else {
+            ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.55f, 1.0f), ICON_MDI_PLAY_CIRCLE_OUTLINE " Sensor Inspection Timeline");
+            ImGui::SameLine();
+            ImGui::TextDisabled("| Scrub playhead or hit Space to inspect baked sequence");
+            ImGui::SameLine();
         }
-        if (!can_delete) ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete selected keyframe (Del / Backspace)");
-        ImGui::SameLine();
 
         if (ImGui::Button(ICON_MDI_ARROW_EXPAND_HORIZONTAL " Fit", ImVec2(60, 24))) {
             frame_timeline_to_all_keyframes();

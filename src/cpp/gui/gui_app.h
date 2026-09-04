@@ -153,6 +153,21 @@ private:
     size_t sim_total_events_{0};
     size_t sim_total_frames_{0};
 
+    // Incremental simulation bake state
+    bool trajectory_dirty_since_sim_{false};
+    std::atomic<bool> sim_cancel_requested_{false};
+    int sim_sampling_preset_{1}; // 0: 300 Hz (Fast), 1: 1000 Hz (Standard), 2: 3200 Hz (HKUST)
+    int sim_current_frame_{0};
+    int sim_total_aps_frames_{0};
+    double sim_dt_aps_{1.0 / 30.0};
+    double sim_exposure_sec_{0.015};
+    int sim_sub_samples_{12};
+    uint32_t sim_saved_cam_w_{0};
+    uint32_t sim_saved_cam_h_{0};
+    std::vector<float> sim_accum_buf_;
+    std::vector<uint8_t> sim_sub_render_buf_;
+    std::vector<float> sim_prev_log_lum_;
+
     std::vector<SimulatedApsFrame> sim_aps_frames_;
     std::vector<SimulatedEvent> sim_events_;
     uint32_t sim_aps_texture_id_{0};
@@ -252,6 +267,10 @@ private:
     void set_multi_view_layout(MultiViewLayout layout);
     void reset_viewport_resolutions();
     void trigger_hesim_simulation();
+    void start_simulation_bake();
+    void step_simulation_bake();
+    void cancel_simulation_bake();
+    void finalize_simulation_bake();
     void update_simulated_viewport_buffers();
     bool export_simulated_dataset(const std::string& path);
 

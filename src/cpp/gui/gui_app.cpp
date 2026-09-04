@@ -243,6 +243,8 @@ void GuiApp::update_keyframe_pose(int index) {
 }
 
 void GuiApp::rebuild_trajectory() {
+    trajectory_dirty_since_sim_ = true;
+
     if (keyframes_.size() < 2) {
         path_samples_.clear();
         return;
@@ -1617,9 +1619,7 @@ void GuiApp::set_app_mode(AppMode mode) {
         for (int i = 0; i < 4; ++i) viewport_views_[i] = studio_views_[i];
     } else {
         for (int i = 0; i < 4; ++i) viewport_views_[i] = sim_views_[i];
-        if (!simulation_has_data_) {
-            trigger_hesim_simulation();
-        } else {
+        if (simulation_has_data_) {
             update_simulated_viewport_buffers();
         }
     }
@@ -1647,7 +1647,7 @@ void GuiApp::render_simulation_progress_modal() {
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(480, 160), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(520, 210), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::Begin("H-ESIM Physics Simulation##Modal", nullptr, flags)) {
@@ -1655,101 +1655,151 @@ void GuiApp::render_simulation_progress_modal() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::ProgressBar(sim_progress_, ImVec2(-1, 26));
+        char prog_overlay[64];
+        std::snprintf(prog_overlay, sizeof(prog_overlay), "%.1f%%  [%d / %d f]", sim_progress_ * 100.0f, sim_current_frame_, sim_total_aps_frames_);
+        ImGui::ProgressBar(sim_progress_, ImVec2(-1, 26), prog_overlay);
         ImGui::Spacing();
+
         if (font_mono_) ImGui::PushFont(font_mono_);
         ImGui::TextDisabled("%s", sim_status_text_.c_str());
         if (font_mono_) ImGui::PopFont();
-        ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.78f, 1.0f), ICON_MDI_CHIP " Multi-Exposure Blur + Quad-Bayer RAW Noise + EVS Events");
+
+        const char* rate_str = (sim_sampling_preset_ == 0) ? "300 Hz (Fast Preview)" :
+                               (sim_sampling_preset_ == 1) ? "1000 Hz (Standard Physical)" : "3200 Hz (HKUST ECCV'26 Benchmark)";
+        ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.78f, 1.0f), ICON_MDI_CHIP " Rate: %s | %zu Events Synthesized", rate_str, sim_events_.size());
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        float btn_w = 160.0f;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - btn_w) * 0.5f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.60f, 0.20f, 0.20f, 1.0f));
+        if (ImGui::Button(ICON_MDI_CLOSE " Cancel Bake", ImVec2(btn_w, 26))) {
+            sim_cancel_requested_ = true;
+        }
+        ImGui::PopStyleColor(2);
     }
     ImGui::End();
 }
 
 void GuiApp::trigger_hesim_simulation() {
+    start_simulation_bake();
+}
+
+void GuiApp::start_simulation_bake() {
     if (!renderer_ || keyframes_.size() < 2) {
         std::cerr << "[GuiApp] Trajectory requires at least 2 keyframes before running physical sensor simulation." << std::endl;
         return;
     }
 
-    is_simulating_ = true;
-    sim_progress_ = 0.0f;
-    sim_status_text_ = "Preparing H-ESIM simulation parameters...";
+    if (is_simulating_) return;
 
-    uint32_t saved_cam_w = camera_render_w_;
-    uint32_t saved_cam_h = camera_render_h_;
+    is_simulating_ = true;
+    sim_cancel_requested_ = false;
+    sim_progress_ = 0.0f;
+    sim_current_frame_ = 0;
+    sim_status_text_ = "Initializing physical sensor simulation parameters...";
+
+    sim_saved_cam_w_ = camera_render_w_;
+    sim_saved_cam_h_ = camera_render_h_;
     renderer_->resize_camera(sensor_tex_w_, sensor_tex_h_);
 
     double duration = std::max(0.5, config_.duration_sec);
     int aps_fps = 30;
-    int total_aps_frames = std::max(1, static_cast<int>(duration * aps_fps));
-    double dt_aps = 1.0 / aps_fps;
-    double exposure_sec = config_.exposure_ms / 1000.0;
-    if (exposure_sec <= 0.0) exposure_sec = 0.015;
+    sim_total_aps_frames_ = std::max(1, static_cast<int>(duration * aps_fps));
+    sim_dt_aps_ = 1.0 / aps_fps;
+    sim_exposure_sec_ = config_.exposure_ms / 1000.0;
+    if (sim_exposure_sec_ <= 0.0) sim_exposure_sec_ = 0.015;
+
+    // Sub-sampling configuration according to user preset:
+    // Preset 0: 300 Hz (Fast) -> 4 sub-samples per frame (~120-300 Hz)
+    // Preset 1: 1000 Hz (Standard) -> 12 sub-samples per frame (~360-1000 Hz)
+    // Preset 2: 3200 Hz (HKUST Benchmark) -> 32 sub-samples per frame (~1000-3200 Hz)
+    if (sim_sampling_preset_ == 0) {
+        sim_sub_samples_ = 4;
+    } else if (sim_sampling_preset_ == 1) {
+        sim_sub_samples_ = 12;
+    } else {
+        sim_sub_samples_ = 32;
+    }
 
     sim_aps_frames_.clear();
     sim_events_.clear();
-    sim_aps_frames_.reserve(total_aps_frames);
+    sim_aps_frames_.reserve(sim_total_aps_frames_);
 
-    std::vector<float> accum_buf(sensor_tex_w_ * sensor_tex_h_ * 3, 0.0f);
-    std::vector<uint8_t> sub_render_buf(sensor_tex_w_ * sensor_tex_h_ * 3, 0);
-    std::vector<float> prev_log_lum(sensor_tex_w_ * sensor_tex_h_, 0.0f);
+    sim_accum_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0.0f);
+    sim_sub_render_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0);
+    sim_prev_log_lum_.assign(sensor_tex_w_ * sensor_tex_h_, 0.0f);
+}
 
-    int sub_samples = 4; // Sub-steps per exposure window for true physical motion blur
+void GuiApp::step_simulation_bake() {
+    if (!is_simulating_) return;
+    if (sim_cancel_requested_) {
+        cancel_simulation_bake();
+        return;
+    }
+
+    int frames_per_tick = (sim_sampling_preset_ == 0) ? 2 : 1;
+    double duration = std::max(0.5, config_.duration_sec);
     double thr = std::max(0.05, config_.event_threshold);
+    float inv_s = 1.0f / sim_sub_samples_;
 
-    for (int f = 0; f < total_aps_frames; ++f) {
-        double frame_t = f * dt_aps;
-        sim_progress_ = static_cast<float>(f) / static_cast<float>(total_aps_frames);
-        sim_status_text_ = "Rendering frame " + std::to_string(f + 1) + " / " + std::to_string(total_aps_frames) + " (Motion Blur + EVS)...";
+    for (int step = 0; step < frames_per_tick && sim_current_frame_ < sim_total_aps_frames_; ++step) {
+        if (sim_cancel_requested_) {
+            cancel_simulation_bake();
+            return;
+        }
 
-        std::fill(accum_buf.begin(), accum_buf.end(), 0.0f);
+        int f = sim_current_frame_;
+        double frame_t = f * sim_dt_aps_;
+        std::fill(sim_accum_buf_.begin(), sim_accum_buf_.end(), 0.0f);
 
         // Sub-sample exposure integration: I_APS = 1/T int_0^T I(t) dt
-        for (int s = 0; s < sub_samples; ++s) {
-            double sub_t = frame_t + ((s + 0.5) / sub_samples) * exposure_sec;
+        for (int s = 0; s < sim_sub_samples_; ++s) {
+            double sub_t = frame_t + ((s + 0.5) / sim_sub_samples_) * sim_exposure_sec_;
             if (sub_t > duration) sub_t = std::fmod(sub_t, duration);
 
             TrajectorySample ts = spline_.evaluate(sub_t);
             renderer_->set_camera_pose(ts.position, ts.orientation);
-            renderer_->render_frame(sub_render_buf.data(), sub_render_buf.size(), static_cast<uint64_t>(sub_t * 1e6));
+            renderer_->render_frame(sim_sub_render_buf_.data(), sim_sub_render_buf_.size(), static_cast<uint64_t>(sub_t * 1e6));
 
-            for (size_t i = 0; i < sub_render_buf.size(); ++i) {
-                accum_buf[i] += sub_render_buf[i];
+            for (size_t i = 0; i < sim_sub_render_buf_.size(); ++i) {
+                sim_accum_buf_[i] += sim_sub_render_buf_[i];
             }
 
             // High-rate EVS event emission from sub-samples
             for (size_t y = 0; y < sensor_tex_h_; y += 2) {
                 for (size_t x = 0; x < sensor_tex_w_; x += 2) {
                     size_t p_idx = (y * sensor_tex_w_ + x);
-                    float r = sub_render_buf[p_idx * 3];
-                    float g = sub_render_buf[p_idx * 3 + 1];
-                    float b = sub_render_buf[p_idx * 3 + 2];
+                    float r = sim_sub_render_buf_[p_idx * 3];
+                    float g = sim_sub_render_buf_[p_idx * 3 + 1];
+                    float b = sim_sub_render_buf_[p_idx * 3 + 2];
                     float lum = 0.299f * r + 0.587f * g + 0.114f * b;
                     float log_lum = std::log(std::max(1.0f, lum));
 
                     if (f > 0 || s > 0) {
-                        float diff = log_lum - prev_log_lum[p_idx];
+                        float diff = log_lum - sim_prev_log_lum_[p_idx];
                         if (diff > thr) {
                             sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
                         } else if (diff < -thr) {
                             sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
                         }
                     }
-                    prev_log_lum[p_idx] = log_lum;
+                    sim_prev_log_lum_[p_idx] = log_lum;
                 }
             }
         }
 
         // Apply physical Poisson-Gaussian sensor noise to blurred frame
         std::vector<uint8_t> blurred_frame(sensor_tex_w_ * sensor_tex_h_ * 3);
-        float inv_s = 1.0f / sub_samples;
-
         for (size_t y = 0; y < sensor_tex_h_; ++y) {
             for (size_t x = 0; x < sensor_tex_w_; ++x) {
                 size_t p_idx = (y * sensor_tex_w_ + x) * 3;
-                float mean_r = accum_buf[p_idx] * inv_s;
-                float mean_g = accum_buf[p_idx + 1] * inv_s;
-                float mean_b = accum_buf[p_idx + 2] * inv_s;
+                float mean_r = sim_accum_buf_[p_idx] * inv_s;
+                float mean_g = sim_accum_buf_[p_idx + 1] * inv_s;
+                float mean_b = sim_accum_buf_[p_idx + 2] * inv_s;
 
                 // Shot & read noise simulation
                 float noise = ((std::rand() % 100) - 50) * 0.08f;
@@ -1761,18 +1811,42 @@ void GuiApp::trigger_hesim_simulation() {
         }
 
         sim_aps_frames_.push_back({frame_t, std::move(blurred_frame)});
+        sim_current_frame_++;
     }
 
+    sim_progress_ = static_cast<float>(sim_current_frame_) / static_cast<float>(sim_total_aps_frames_);
+    sim_status_text_ = "Baking frame " + std::to_string(sim_current_frame_) + " / " + std::to_string(sim_total_aps_frames_) + " (Motion Blur + EVS)...";
+
+    if (sim_current_frame_ >= sim_total_aps_frames_) {
+        finalize_simulation_bake();
+    }
+}
+
+void GuiApp::cancel_simulation_bake() {
+    is_simulating_ = false;
+    sim_cancel_requested_ = false;
+    if (sim_saved_cam_w_ > 0 && sim_saved_cam_h_ > 0 && renderer_) {
+        resize_camera_render(sim_saved_cam_w_, sim_saved_cam_h_);
+    }
+    std::cout << "[GuiApp] Simulation bake cancelled by user." << std::endl;
+}
+
+void GuiApp::finalize_simulation_bake() {
     sim_total_events_ = sim_events_.size();
     sim_total_frames_ = sim_aps_frames_.size();
     simulation_has_data_ = true;
+    trajectory_dirty_since_sim_ = false;
     is_simulating_ = false;
 
-    if (saved_cam_w > 0 && saved_cam_h > 0) {
-        resize_camera_render(saved_cam_w, saved_cam_h);
+    if (sim_saved_cam_w_ > 0 && sim_saved_cam_h_ > 0 && renderer_) {
+        resize_camera_render(sim_saved_cam_w_, sim_saved_cam_h_);
     }
 
     set_app_mode(AppMode::SENSOR_SIMULATION);
+    update_simulated_viewport_buffers();
+    std::cout << "[GuiApp] Physical sensor simulation bake completed: "
+              << sim_total_frames_ << " APS frames, "
+              << sim_total_events_ << " events." << std::endl;
 }
 
 void GuiApp::update_simulated_viewport_buffers() {
@@ -1846,6 +1920,11 @@ bool GuiApp::export_simulated_dataset(const std::string& path) {
 }
 
 void GuiApp::update_simulation_step(double dt) {
+    if (is_simulating_) {
+        step_simulation_bake();
+        return;
+    }
+
     if (is_playing_) {
         current_time_sec_ += dt * playback_speed_;
         double max_t = config_.duration_sec;

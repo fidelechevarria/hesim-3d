@@ -143,23 +143,55 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
     ImGui::PopStyleVar();
 
     if (open) {
-        // Top Toolbar inside each Viewport
-        const char* view_names[] = {
-            ICON_MDI_CAMERA " Camera (Clean Look-Through)",
-            ICON_MDI_LIGHTNING_BOLT " EVS Events (Accumulation)",
-            ICON_MDI_VIEW_GRID " Top (Top Ortho X-Z)",
-            ICON_MDI_VIEW_AGENDA " Front (Front Ortho X-Y)",
-            ICON_MDI_VIEW_WEEK " Side (Side Ortho Z-Y)",
-            ICON_MDI_ROTATE_ORBIT " 3D Perspective",
-            ICON_MDI_CHART_BELL_CURVE " IMU Telemetry",
-            ICON_MDI_IMAGE " Simulated APS (Blur + Noise)"
+        // Filter available views based on current application mode
+        struct ViewportOption {
+            ViewportContent content;
+            const char* name;
         };
 
-        int cur_view = static_cast<int>(viewport_views_[quad_idx]);
-        ImGui::SetNextItemWidth(210);
+        std::vector<ViewportOption> available_views;
+        if (current_mode_ == AppMode::TRAJECTORY_STUDIO) {
+            available_views = {
+                { ViewportContent::CAMERA_CLEAN,  ICON_MDI_CAMERA " Camera (Clean Look-Through)" },
+                { ViewportContent::TOP_ORTHO,      ICON_MDI_VIEW_GRID " Top (Top Ortho X-Z)" },
+                { ViewportContent::FRONT_ORTHO,    ICON_MDI_VIEW_AGENDA " Front (Front Ortho X-Y)" },
+                { ViewportContent::SIDE_ORTHO,     ICON_MDI_VIEW_WEEK " Side (Side Ortho Z-Y)" },
+                { ViewportContent::WORLD_3D_ORBIT, ICON_MDI_ROTATE_ORBIT " 3D Perspective" },
+                { ViewportContent::IMU_TELEMETRY,  ICON_MDI_CHART_BELL_CURVE " IMU Telemetry (Kinematics)" }
+            };
+        } else {
+            available_views = {
+                { ViewportContent::CAMERA_CLEAN,         ICON_MDI_CAMERA " Camera (Ground Truth Ref)" },
+                { ViewportContent::SIMULATED_APS_SENSOR, ICON_MDI_IMAGE " Simulated APS (Blur + Noise)" },
+                { ViewportContent::EVS_ACCUMULATION,     ICON_MDI_LIGHTNING_BOLT " EVS Events (Accumulation)" },
+                { ViewportContent::IMU_TELEMETRY,        ICON_MDI_CHART_BELL_CURVE " Sensor IMU (With Noise)" }
+            };
+        }
+
+        int cur_view_idx = 0;
+        bool found_view = false;
+        for (size_t i = 0; i < available_views.size(); ++i) {
+            if (available_views[i].content == viewport_views_[quad_idx]) {
+                cur_view_idx = static_cast<int>(i);
+                found_view = true;
+                break;
+            }
+        }
+        if (!found_view && !available_views.empty()) {
+            viewport_views_[quad_idx] = available_views[0].content;
+            cur_view_idx = 0;
+        }
+
+        std::vector<const char*> view_names;
+        view_names.reserve(available_views.size());
+        for (const auto& opt : available_views) {
+            view_names.push_back(opt.name);
+        }
+
+        ImGui::SetNextItemWidth(220);
         std::string combo_id = "##ViewCombo_" + std::to_string(quad_idx);
-        if (ImGui::Combo(combo_id.c_str(), &cur_view, view_names, 8)) {
-            viewport_views_[quad_idx] = static_cast<ViewportContent>(cur_view);
+        if (ImGui::Combo(combo_id.c_str(), &cur_view_idx, view_names.data(), static_cast<int>(view_names.size()))) {
+            viewport_views_[quad_idx] = available_views[cur_view_idx].content;
             reset_viewport_resolutions();
         }
 
@@ -357,26 +389,56 @@ void GuiApp::render_single_viewport(int quad_idx, const std::string& name, Viewp
             }
 
             case ViewportContent::SIMULATED_APS_SENSOR:
-                render_aspect_image(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_);
+                if (!simulation_has_data_) {
+                    ImGui::SetCursorScreenPos(ImVec2(canvas_p0.x + 24.0f, canvas_p0.y + 30.0f));
+                    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), ICON_MDI_INFORMATION_OUTLINE " Simulation data not baked yet.");
+                    ImGui::SetCursorScreenPos(ImVec2(canvas_p0.x + 24.0f, canvas_p0.y + 55.0f));
+                    ImGui::TextDisabled("Physical motion blur & sensor noise require baking.");
+                    ImGui::SetCursorScreenPos(ImVec2(canvas_p0.x + 24.0f, canvas_p0.y + 85.0f));
+                    if (keyframes_.size() >= 2) {
+                        if (ImGui::Button(ICON_MDI_ROCKET_LAUNCH " Bake Simulation Now##aps", ImVec2(210, 28))) {
+                            start_simulation_bake();
+                        }
+                    } else {
+                        ImGui::TextDisabled("Capture >= 2 keyframes in Trajectory Studio to bake.");
+                    }
+                } else {
+                    render_aspect_image(sim_aps_texture_id_, sensor_tex_w_, sensor_tex_h_);
+                }
                 break;
 
             case ViewportContent::EVS_ACCUMULATION: {
-                if (avail_sz.x > 10.0f && avail_sz.y > 10.0f) {
-                    float tex_aspect = static_cast<float>(sensor_tex_w_) / static_cast<float>(sensor_tex_h_);
-                    float avail_aspect = avail_sz.x / avail_sz.y;
-                    float draw_w = (avail_aspect > tex_aspect) ? (avail_sz.y * tex_aspect) : avail_sz.x;
-                    float draw_h = (avail_aspect > tex_aspect) ? avail_sz.y : (avail_sz.x / tex_aspect);
-
-                    uint32_t tw = (static_cast<uint32_t>(draw_w) + 3) & ~3u;
-                    uint32_t th = (static_cast<uint32_t>(draw_h) + 1) & ~1u;
-
-                    int thresh = (layout_settle_frames_ > 0) ? 0 : 8;
-                    if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > thresh ||
-                        std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > thresh) {
-                        resize_camera_render(tw, th);
+                if (!simulation_has_data_) {
+                    ImGui::SetCursorScreenPos(ImVec2(canvas_p0.x + 24.0f, canvas_p0.y + 30.0f));
+                    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), ICON_MDI_INFORMATION_OUTLINE " No neuromorphic events generated yet.");
+                    ImGui::SetCursorScreenPos(ImVec2(canvas_p0.x + 24.0f, canvas_p0.y + 55.0f));
+                    ImGui::TextDisabled("Microsecond event stream requires physical simulation bake.");
+                    ImGui::SetCursorScreenPos(ImVec2(canvas_p0.x + 24.0f, canvas_p0.y + 85.0f));
+                    if (keyframes_.size() >= 2) {
+                        if (ImGui::Button(ICON_MDI_ROCKET_LAUNCH " Bake Simulation Now##evs", ImVec2(210, 28))) {
+                            start_simulation_bake();
+                        }
+                    } else {
+                        ImGui::TextDisabled("Capture >= 2 keyframes in Trajectory Studio to bake.");
                     }
+                } else {
+                    if (avail_sz.x > 10.0f && avail_sz.y > 10.0f) {
+                        float tex_aspect = static_cast<float>(sensor_tex_w_) / static_cast<float>(sensor_tex_h_);
+                        float avail_aspect = avail_sz.x / avail_sz.y;
+                        float draw_w = (avail_aspect > tex_aspect) ? (avail_sz.y * tex_aspect) : avail_sz.x;
+                        float draw_h = (avail_aspect > tex_aspect) ? avail_sz.y : (avail_sz.x / tex_aspect);
+
+                        uint32_t tw = (static_cast<uint32_t>(draw_w) + 3) & ~3u;
+                        uint32_t th = (static_cast<uint32_t>(draw_h) + 1) & ~1u;
+
+                        int thresh = (layout_settle_frames_ > 0) ? 0 : 8;
+                        if (std::abs(static_cast<int>(tw) - static_cast<int>(camera_render_w_)) > thresh ||
+                            std::abs(static_cast<int>(th) - static_cast<int>(camera_render_h_)) > thresh) {
+                            resize_camera_render(tw, th);
+                        }
+                    }
+                    render_aspect_image(evs_texture_id_, camera_render_w_, camera_render_h_);
                 }
-                render_aspect_image(evs_texture_id_, camera_render_w_, camera_render_h_);
                 break;
             }
 
