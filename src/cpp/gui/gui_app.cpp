@@ -18,6 +18,7 @@
 #include <csignal>
 #include <filesystem>
 #include <ctime>
+#include <cstring>
 #include "native_dialogs.h"
 
 namespace hesim3d {
@@ -2376,7 +2377,7 @@ void GuiApp::step_simulation_bake() {
         for (int s = 0; s < sim_sub_samples_; ++s) {
             double sample_rel_t = ((s + 0.5) / sim_sub_samples_) * sim_dt_aps_;
             double sub_t = frame_t + sample_rel_t;
-            if (sub_t > duration) sub_t = std::fmod(sub_t, duration);
+            if (sub_t > duration) sub_t = duration;
 
             TrajectorySample ts = spline_.evaluate(sub_t);
             renderer_->set_camera_pose(ts.position, ts.orientation);
@@ -2463,6 +2464,11 @@ void GuiApp::cancel_simulation_bake() {
 }
 
 void GuiApp::finalize_simulation_bake() {
+    std::stable_sort(sim_events_.begin(), sim_events_.end(),
+                     [](const SimulatedEvent& a, const SimulatedEvent& b) {
+                         return a.timestamp_sec < b.timestamp_sec;
+                     });
+
     sim_total_events_ = sim_events_.size();
     sim_total_frames_ = sim_aps_frames_.size();
     simulation_has_data_ = true;
@@ -2483,15 +2489,27 @@ void GuiApp::finalize_simulation_bake() {
 void GuiApp::update_simulated_viewport_buffers() {
     if (!simulation_has_data_) return;
 
-    // 1. Closest simulated APS frame (with motion blur & noise)
+    // 1. Closest simulated APS frame (with motion blur & noise) via binary search O(log N)
     if (!sim_aps_frames_.empty()) {
+        auto it = std::lower_bound(
+            sim_aps_frames_.begin(), sim_aps_frames_.end(), current_time_sec_,
+            [](const SimulatedApsFrame& f, double t) {
+                return f.timestamp_sec < t;
+            }
+        );
         size_t best_idx = 0;
-        double min_dt = std::abs(sim_aps_frames_[0].timestamp_sec - current_time_sec_);
-        for (size_t i = 1; i < sim_aps_frames_.size(); ++i) {
-            double dt = std::abs(sim_aps_frames_[i].timestamp_sec - current_time_sec_);
-            if (dt < min_dt) {
-                min_dt = dt;
-                best_idx = i;
+        if (it == sim_aps_frames_.end()) {
+            best_idx = sim_aps_frames_.size() - 1;
+        } else if (it == sim_aps_frames_.begin()) {
+            best_idx = 0;
+        } else {
+            size_t idx2 = std::distance(sim_aps_frames_.begin(), it);
+            size_t idx1 = idx2 - 1;
+            if (std::abs(sim_aps_frames_[idx2].timestamp_sec - current_time_sec_) <
+                std::abs(sim_aps_frames_[idx1].timestamp_sec - current_time_sec_)) {
+                best_idx = idx2;
+            } else {
+                best_idx = idx1;
             }
         }
         if (best_idx < sim_aps_frames_.size() &&
@@ -2511,16 +2529,41 @@ void GuiApp::update_simulated_viewport_buffers() {
         t_end = std::max(t_end, window_sec);
     }
 
-    for (size_t i = 0; i < sensor_tex_w_ * sensor_tex_h_; ++i) {
-        evs_img_buffer_[i * 3 + 0] = 24;
-        evs_img_buffer_[i * 3 + 1] = 26;
-        evs_img_buffer_[i * 3 + 2] = 30;
+    // Fast exponential memcpy background clear to dark tone (24, 26, 30)
+    const size_t total_bytes = sensor_tex_w_ * sensor_tex_h_ * 3;
+    if (evs_img_buffer_.size() >= total_bytes && total_bytes > 0) {
+        evs_img_buffer_[0] = 24;
+        evs_img_buffer_[1] = 26;
+        evs_img_buffer_[2] = 30;
+        size_t copied = 3;
+        while (copied * 2 <= total_bytes) {
+            std::memcpy(evs_img_buffer_.data() + copied, evs_img_buffer_.data(), copied);
+            copied *= 2;
+        }
+        if (copied < total_bytes) {
+            std::memcpy(evs_img_buffer_.data() + copied, evs_img_buffer_.data(), total_bytes - copied);
+        }
     }
 
-    for (const auto& ev : sim_events_) {
-        if (ev.timestamp_sec >= t_start && ev.timestamp_sec <= t_end) {
+    // Binary search event time window O(log N) + iterate only window events
+    if (!sim_events_.empty()) {
+        auto it_begin = std::lower_bound(
+            sim_events_.begin(), sim_events_.end(), t_start,
+            [](const SimulatedEvent& ev, double t) {
+                return ev.timestamp_sec < t;
+            }
+        );
+        auto it_end = std::upper_bound(
+            it_begin, sim_events_.end(), t_end,
+            [](double t, const SimulatedEvent& ev) {
+                return t < ev.timestamp_sec;
+            }
+        );
+
+        for (auto it = it_begin; it != it_end; ++it) {
+            const auto& ev = *it;
             if (ev.x < sensor_tex_w_ && ev.y < sensor_tex_h_) {
-                size_t idx = (ev.y * sensor_tex_w_ + ev.x) * 3;
+                size_t idx = (static_cast<size_t>(ev.y) * sensor_tex_w_ + ev.x) * 3;
                 if (ev.polarity > 0) {
                     evs_img_buffer_[idx + 0] = 255;
                     evs_img_buffer_[idx + 1] = 45;
