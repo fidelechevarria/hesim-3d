@@ -389,7 +389,8 @@ bool init_scientific_bake_bridge(
     double event_threshold,
     int refractory_period_us,
     std::string& out_device_name,
-    std::string& out_model_info
+    std::string& out_model_info,
+    const std::string& output_h5_path = ""
 );
 
 bool step_scientific_bake_bridge(
@@ -398,7 +399,17 @@ bool step_scientific_bake_bridge(
     const std::vector<uint64_t>& sub_timestamps_us,
     uint64_t shutter_duration_us,
     std::vector<SimulatedEvent>& out_events,
-    std::vector<uint8_t>& out_aps_frame
+    std::vector<uint8_t>& out_aps_frame,
+    size_t* out_total_physical_events = nullptr
+);
+
+void finalize_scientific_bake_bridge(
+    const std::vector<uint64_t>& imu_timestamps_us,
+    const std::vector<double>& imu_gyro_flat,
+    const std::vector<double>& imu_acc_flat,
+    const std::vector<uint64_t>& gt_timestamps_us,
+    const std::vector<double>& gt_pos_flat,
+    const std::vector<double>& gt_quat_flat
 );
 
 void reset_scientific_bake_bridge();

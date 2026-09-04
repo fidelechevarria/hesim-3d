@@ -2591,6 +2591,8 @@ void GuiApp::start_simulation_bake() {
     sim_last_event_time_.assign(sensor_tex_w_ * sensor_tex_h_, -1000.0);
 
     sim_bake_start_time_ = std::chrono::steady_clock::now();
+    recording_output_path_ = generate_default_dataset_path();
+    export_modal_h5_path_ = recording_output_path_;
     if (use_scientific_hesim_) {
         bool ok = init_scientific_bake_bridge(
             config_.sensor_name,
@@ -2599,13 +2601,15 @@ void GuiApp::start_simulation_bake() {
             config_.event_threshold,
             config_.refractory_period_us,
             sim_device_info_,
-            sim_noise_model_info_
+            sim_noise_model_info_,
+            recording_output_path_
         );
         if (!ok) {
             std::cerr << "[GuiApp] Warning: Scientific H-ESIM init failed, falling back to C++ approximation." << std::endl;
             use_scientific_hesim_ = false;
         } else {
-            std::cout << "[GuiApp] Initialized Scientific H-ESIM on " << sim_device_info_ << std::endl;
+            std::cout << "[GuiApp] Initialized Scientific H-ESIM on " << sim_device_info_
+                      << " (live streaming dataset to: " << recording_output_path_ << ")" << std::endl;
         }
     }
 }
@@ -2657,25 +2661,21 @@ void GuiApp::step_simulation_bake() {
             std::vector<uint8_t> blurred_aps_frame;
             uint64_t shutter_us = static_cast<uint64_t>(sim_exposure_sec_ * 1e6);
 
+            size_t step_physical_events = 0;
             bool step_ok = step_scientific_bake_bridge(
                 sim_batch_render_buf_.data(),
                 sim_batch_render_buf_.size(),
                 sim_sub_timestamps_us_,
                 shutter_us,
                 frame_events,
-                blurred_aps_frame
+                blurred_aps_frame,
+                &step_physical_events
             );
 
             if (step_ok) {
-                sim_total_events_ += frame_events.size();
-                if (sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
-                    size_t available = MAX_IN_MEMORY_EVENTS - sim_events_.size();
-                    if (frame_events.size() <= available) {
-                        sim_events_.insert(sim_events_.end(), frame_events.begin(), frame_events.end());
-                    } else {
-                        sim_events_.insert(sim_events_.end(), frame_events.begin(), frame_events.begin() + available);
-                    }
-                }
+                sim_total_events_ += step_physical_events;
+                // Add display events into sim_events_ uniformly across all frames (never starve frames > 17)
+                sim_events_.insert(sim_events_.end(), frame_events.begin(), frame_events.end());
                 sim_aps_frames_.push_back({frame_t, std::move(blurred_aps_frame)});
             }
             sim_current_frame_++;
@@ -2704,7 +2704,7 @@ void GuiApp::step_simulation_bake() {
         double frame_t = f * sim_dt_aps_;
         std::fill(sim_accum_buf_.begin(), sim_accum_buf_.end(), 0.0f);
         int aps_accum_count = 0;
-
+        size_t frame_disp_events = 0;
         // Sub-sample exposure integration across the entire frame interval [frame_t, frame_t + sim_dt_aps_]
         for (int s = 0; s < sim_sub_samples_; ++s) {
             double sample_rel_t = ((s + 0.5) / sim_sub_samples_) * sim_dt_aps_;
@@ -2717,14 +2717,14 @@ void GuiApp::step_simulation_bake() {
             renderer_->render_frame(sim_sub_render_buf_.data(), sim_sub_render_buf_.size(), static_cast<uint64_t>(sub_t * 1e6));
 
             // Integrate APS exposure within shutter duration (or all sub-samples if exposure >= dt)
-            if (sample_rel_t <= sim_exposure_sec_ || sim_exposure_sec_ >= sim_dt_aps_ || s == 0) {
-                for (size_t i = 0; i < sim_sub_render_buf_.size(); ++i) {
+            if (sample_rel_t <= sim_exposure_sec_ || aps_accum_count == 0) {
+                for (size_t i = 0; i < sim_accum_buf_.size(); ++i) {
                     sim_accum_buf_[i] += sim_sub_render_buf_[i];
                 }
                 aps_accum_count++;
             }
 
-            // Continuous EVS event emission with refractory reference tracking
+            // Neuromorphic DVS event generation across sub-sample interval [sub_t_prev, sub_t]
             for (size_t y = 0; y < sensor_tex_h_; ++y) {
                 for (size_t x = 0; x < sensor_tex_w_; ++x) {
                     size_t p_idx = (y * sensor_tex_w_ + x);
@@ -2745,8 +2745,9 @@ void GuiApp::step_simulation_bake() {
                                 if (ev_t > duration) ev_t = duration;
                                 if (ev_t - sim_last_event_time_[p_idx] >= refr_sec) {
                                     sim_total_events_++;
-                                    if (sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
+                                    if (frame_disp_events < 50000 && sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
                                         sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
+                                        frame_disp_events++;
                                     }
                                     sim_last_event_time_[p_idx] = ev_t;
                                 }
@@ -2759,8 +2760,9 @@ void GuiApp::step_simulation_bake() {
                                 if (ev_t > duration) ev_t = duration;
                                 if (ev_t - sim_last_event_time_[p_idx] >= refr_sec) {
                                     sim_total_events_++;
-                                    if (sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
+                                    if (frame_disp_events < 50000 && sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
                                         sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                                        frame_disp_events++;
                                     }
                                     sim_last_event_time_[p_idx] = ev_t;
                                 }
@@ -2831,6 +2833,45 @@ void GuiApp::finalize_simulation_bake() {
 
     if (sim_saved_cam_w_ > 0 && sim_saved_cam_h_ > 0 && renderer_) {
         resize_camera_render(sim_saved_cam_w_, sim_saved_cam_h_);
+    }
+
+    // Attach IMU and GT and finalize streaming HDF5 file on disk
+    if (use_scientific_hesim_) {
+        double dur = std::max(0.1, config_.duration_sec);
+        int imu_samples = static_cast<int>(std::ceil(dur * 200.0)) + 1;
+        std::vector<uint64_t> imu_ts(imu_samples);
+        std::vector<double> imu_gyro(imu_samples * 3);
+        std::vector<double> imu_acc(imu_samples * 3);
+        std::vector<uint64_t> gt_ts(imu_samples);
+        std::vector<double> gt_pos(imu_samples * 3);
+        std::vector<double> gt_quat(imu_samples * 4);
+
+        for (int i = 0; i < imu_samples; ++i) {
+            double t = std::min(dur, i * (dur / std::max(1, imu_samples - 1)));
+            uint64_t t_us = static_cast<uint64_t>(t * 1e6);
+            imu_ts[i] = t_us;
+            gt_ts[i] = t_us;
+
+            hesim3d::TrajectorySample s = spline_.evaluate(t);
+            imu_gyro[i * 3 + 0] = s.angular_velocity_body.x();
+            imu_gyro[i * 3 + 1] = s.angular_velocity_body.y();
+            imu_gyro[i * 3 + 2] = s.angular_velocity_body.z();
+
+            imu_acc[i * 3 + 0] = s.imu_acceleration.x();
+            imu_acc[i * 3 + 1] = s.imu_acceleration.y();
+            imu_acc[i * 3 + 2] = s.imu_acceleration.z();
+
+            gt_pos[i * 3 + 0] = s.position.x();
+            gt_pos[i * 3 + 1] = s.position.y();
+            gt_pos[i * 3 + 2] = s.position.z();
+
+            gt_quat[i * 4 + 0] = s.orientation.x();
+            gt_quat[i * 4 + 1] = s.orientation.y();
+            gt_quat[i * 4 + 2] = s.orientation.z();
+            gt_quat[i * 4 + 3] = s.orientation.w();
+        }
+
+        finalize_scientific_bake_bridge(imu_ts, imu_gyro, imu_acc, gt_ts, gt_pos, gt_quat);
     }
 
     set_app_mode(AppMode::SENSOR_SIMULATION);
@@ -2959,6 +3000,29 @@ bool GuiApp::export_simulated_dataset(const std::string& path) {
         save_trajectory_to_json(traj_target);
     }
 
+    // If live streaming already produced the dataset at recording_output_path_
+    if (!recording_output_path_.empty() && std::filesystem::exists(recording_output_path_)) {
+        if (std::filesystem::path(path) != std::filesystem::path(recording_output_path_)) {
+            try {
+                std::filesystem::copy_file(
+                    recording_output_path_, path,
+                    std::filesystem::copy_options::overwrite_existing
+                );
+            } catch (const std::exception& e) {
+                std::cerr << "[GuiApp] Failed to copy dataset to " << path << ": " << e.what() << std::endl;
+                return false;
+            }
+        }
+        recording_output_path_ = path;
+        try {
+            last_dataset_dir_ = std::filesystem::path(path).parent_path().string();
+        } catch (...) {}
+        std::cout << "[GuiApp] Successfully saved full dataset ("
+                  << sim_total_events_ << " events, "
+                  << sim_aps_frames_.size() << " APS frames) to " << path << std::endl;
+        return true;
+    }
+
     bool ok = export_simulation_to_hdf5(
         path,
         config_.sensor_name,
@@ -2975,7 +3039,7 @@ bool GuiApp::export_simulated_dataset(const std::string& path) {
             last_dataset_dir_ = std::filesystem::path(path).parent_path().string();
         } catch (...) {}
         std::cout << "[GuiApp] Successfully exported HDF5 dataset ("
-                  << sim_events_.size() << " events, "
+                  << sim_total_events_ << " events, "
                   << sim_aps_frames_.size() << " APS frames) to " << path << std::endl;
     }
     return ok;

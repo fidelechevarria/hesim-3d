@@ -9,6 +9,7 @@ import torch
 from hesim3d.sensor.config import SensorConfig
 from hesim3d.sensor.isp import SensorISP
 from hesim3d.sensor.hesim_backend import HESIMEventSimulator
+from hesim3d.io.hdf5_writer import HDF5DatasetWriter
 
 
 class ScientificBakeEngine:
@@ -28,6 +29,7 @@ class ScientificBakeEngine:
         event_threshold: Optional[float] = None,
         refractory_period_us: Optional[int] = None,
         device: Optional[str] = None,
+        output_path: Optional[Union[str, Path]] = None,
     ):
         # 1. Resolve and configure sensor preset
         try:
@@ -55,7 +57,12 @@ class ScientificBakeEngine:
         else:
             self.device = device
 
-        # 3. Initialize Sensor ISP and PyTorch H-ESIM Neuromorphic Backend
+        # 3. Optional live streaming HDF5 writer on disk
+        self.writer: Optional[HDF5DatasetWriter] = None
+        if output_path is not None and len(str(output_path).strip()) > 0:
+            self.writer = HDF5DatasetWriter(output_path, self.config)
+
+        # 4. Initialize Sensor ISP and PyTorch H-ESIM Neuromorphic Backend
         self.isp = SensorISP(self.config)
         self.event_backend = HESIMEventSimulator(self.config, device=self.device)
         self.event_backend.reset_state(self.config.height, self.config.width)
@@ -94,13 +101,49 @@ class ScientificBakeEngine:
         self.last_sub_t_us = None
         self.accum_raw_frame = None
         self.accum_count = 0
+        if self.writer is not None:
+            try:
+                self.writer.close()
+            except Exception:
+                pass
+            self.writer = None
+
+    def finalize(
+        self,
+        imu_timestamps_us: Optional[List[int]] = None,
+        imu_gyro_flat: Optional[List[float]] = None,
+        imu_acc_flat: Optional[List[float]] = None,
+        gt_timestamps_us: Optional[List[int]] = None,
+        gt_pos_flat: Optional[List[float]] = None,
+        gt_quat_flat: Optional[List[float]] = None,
+    ) -> None:
+        """Finalize direct-to-disk dataset export by attaching telemetry and closing writer."""
+        if self.writer is None:
+            return
+
+        # 1. IMU
+        if imu_timestamps_us and len(imu_timestamps_us) > 0 and imu_gyro_flat and imu_acc_flat:
+            imu_g = np.asarray(imu_gyro_flat, dtype=np.float64).reshape((-1, 3))
+            imu_a = np.asarray(imu_acc_flat, dtype=np.float64).reshape((-1, 3))
+            for j in range(len(imu_timestamps_us)):
+                self.writer.write_imu(int(imu_timestamps_us[j]), imu_g[j], imu_a[j])
+
+        # 2. Ground Truth
+        if gt_timestamps_us and len(gt_timestamps_us) > 0 and gt_pos_flat and gt_quat_flat:
+            gt_p = np.asarray(gt_pos_flat, dtype=np.float64).reshape((-1, 3))
+            gt_q = np.asarray(gt_quat_flat, dtype=np.float64).reshape((-1, 4))
+            for k in range(len(gt_timestamps_us)):
+                self.writer.write_ground_truth_pose(int(gt_timestamps_us[k]), gt_p[k], gt_q[k])
+
+        self.writer.close()
+        self.writer = None
 
     def process_aps_subsamples(
         self,
         sub_frames_bytes: bytes,
         sub_timestamps_us: List[int],
         shutter_duration_us: int,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, bytes]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, bytes, int]:
         """
         Process a batch of sub-frames across an APS frame interval.
 
@@ -110,7 +153,7 @@ class ScientificBakeEngine:
             shutter_duration_us: Optical shutter open duration in microseconds
 
         Returns:
-            Tuple of (ev_t_us, ev_x, ev_y, ev_p, blurred_aps_frame_bytes)
+            Tuple of (ev_t_us, ev_x, ev_y, ev_p, blurred_aps_frame_bytes, total_physical_events)
         """
         n_samples = len(sub_timestamps_us)
         H = self.config.height
@@ -124,6 +167,7 @@ class ScientificBakeEngine:
                 np.empty(0, dtype=np.uint16),
                 np.empty(0, dtype=np.int8),
                 b"",
+                0,
             )
 
         # Interpret contiguous byte stream as (N, H, W, 3) numpy array
@@ -166,18 +210,14 @@ class ScientificBakeEngine:
             self.last_raw_tensor = raw_tensor
             self.last_sub_t_us = t_us
 
-        # 5. Consolidate generated events for this APS frame
+        # 5. Stream 100% of physical events directly to disk if writer exists
+        total_physical_events = 0
+        all_ev = None
         if event_chunks:
             all_ev = np.concatenate(event_chunks, axis=0)
-            ev_t = all_ev["t"]
-            ev_x = all_ev["x"]
-            ev_y = all_ev["y"]
-            ev_p = all_ev["p"]
-        else:
-            ev_t = np.empty(0, dtype=np.uint64)
-            ev_x = np.empty(0, dtype=np.uint16)
-            ev_y = np.empty(0, dtype=np.uint16)
-            ev_p = np.empty(0, dtype=np.int8)
+            total_physical_events = len(all_ev)
+            if self.writer is not None:
+                self.writer.write_events(all_ev)
 
         # 6. Synthesize blurred APS frame with real physical exposure integration & Poisson-Gaussian readout noise
         if accum_count > 0:
@@ -191,7 +231,30 @@ class ScientificBakeEngine:
 
         blurred_bytes = blurred_rgb.tobytes()
 
-        return ev_t, ev_x, ev_y, ev_p, blurred_bytes
+        # Stream frame to disk if writer exists
+        if self.writer is not None:
+            self.writer.write_frame(blurred_rgb, int(sub_timestamps_us[-1]))
+
+        # 7. Extract evenly decimated events for real-time 60 FPS viewport playback (cap per frame ~50,000)
+        max_disp = 50000
+        if all_ev is not None and total_physical_events > 0:
+            if total_physical_events > max_disp:
+                stride = int(math.ceil(total_physical_events / max_disp))
+                disp_ev = all_ev[::stride]
+            else:
+                disp_ev = all_ev
+
+            ev_t = disp_ev["t"]
+            ev_x = disp_ev["x"]
+            ev_y = disp_ev["y"]
+            ev_p = disp_ev["p"]
+        else:
+            ev_t = np.empty(0, dtype=np.uint64)
+            ev_x = np.empty(0, dtype=np.uint16)
+            ev_y = np.empty(0, dtype=np.uint16)
+            ev_p = np.empty(0, dtype=np.int8)
+
+        return ev_t, ev_x, ev_y, ev_p, blurred_bytes, total_physical_events
 
 
 # Global singleton instance for seamless nanobind C++ bridge invocation
@@ -204,6 +267,7 @@ def init_scientific_engine(
     height: int,
     event_threshold: float,
     refractory_period_us: int,
+    output_path: Optional[str] = None,
 ) -> Tuple[str, str]:
     """
     Initialize or reconfigure the singleton ScientificBakeEngine.
@@ -216,6 +280,7 @@ def init_scientific_engine(
         height=height,
         event_threshold=event_threshold,
         refractory_period_us=refractory_period_us,
+        output_path=output_path,
     )
     info = _GLOBAL_ENGINE.get_device_info()
     return info["device"], info["noise_model"]
@@ -225,16 +290,16 @@ def step_scientific_engine(
     sub_frames_bytes: bytes,
     sub_timestamps_us: List[int],
     shutter_duration_us: int,
-) -> Tuple[List[int], List[int], List[int], List[int], bytes]:
+) -> Tuple[List[int], List[int], List[int], List[int], bytes, int]:
     """
     Execute scientific simulation step for one APS frame interval.
-    Returns (ev_t, ev_x, ev_y, ev_p, blurred_aps_frame_bytes).
+    Returns (ev_t, ev_x, ev_y, ev_p, blurred_aps_frame_bytes, total_physical_events).
     """
     global _GLOBAL_ENGINE
     if _GLOBAL_ENGINE is None:
         raise RuntimeError("ScientificBakeEngine not initialized. Call init_scientific_engine first.")
 
-    ev_t, ev_x, ev_y, ev_p, blurred_bytes = _GLOBAL_ENGINE.process_aps_subsamples(
+    ev_t, ev_x, ev_y, ev_p, blurred_bytes, total_physical = _GLOBAL_ENGINE.process_aps_subsamples(
         sub_frames_bytes, sub_timestamps_us, shutter_duration_us
     )
 
@@ -244,7 +309,29 @@ def step_scientific_engine(
         ev_y.tolist(),
         ev_p.tolist(),
         blurred_bytes,
+        int(total_physical),
     )
+
+
+def finalize_scientific_engine(
+    imu_timestamps_us: Optional[List[int]] = None,
+    imu_gyro_flat: Optional[List[float]] = None,
+    imu_acc_flat: Optional[List[float]] = None,
+    gt_timestamps_us: Optional[List[int]] = None,
+    gt_pos_flat: Optional[List[float]] = None,
+    gt_quat_flat: Optional[List[float]] = None,
+) -> None:
+    """Finalize active streaming HDF5 file with telemetry."""
+    global _GLOBAL_ENGINE
+    if _GLOBAL_ENGINE is not None:
+        _GLOBAL_ENGINE.finalize(
+            imu_timestamps_us,
+            imu_gyro_flat,
+            imu_acc_flat,
+            gt_timestamps_us,
+            gt_pos_flat,
+            gt_quat_flat,
+        )
 
 
 def reset_scientific_engine() -> None:

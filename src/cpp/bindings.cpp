@@ -284,7 +284,8 @@ bool init_scientific_bake_bridge(
     double event_threshold,
     int refractory_period_us,
     std::string& out_device_name,
-    std::string& out_model_info
+    std::string& out_model_info,
+    const std::string& output_h5_path
 ) {
     try {
         nb::gil_scoped_acquire gil;
@@ -295,7 +296,8 @@ bool init_scientific_bake_bridge(
             width,
             height,
             event_threshold,
-            refractory_period_us
+            refractory_period_us,
+            output_h5_path.empty() ? nb::none() : nb::cast(output_h5_path)
         ));
         out_device_name = nb::cast<std::string>(res[0]);
         out_model_info = nb::cast<std::string>(res[1]);
@@ -314,7 +316,8 @@ bool step_scientific_bake_bridge(
     const std::vector<uint64_t>& sub_timestamps_us,
     uint64_t shutter_duration_us,
     std::vector<SimulatedEvent>& out_events,
-    std::vector<uint8_t>& out_aps_frame
+    std::vector<uint8_t>& out_aps_frame,
+    size_t* out_total_physical_events
 ) {
     try {
         nb::gil_scoped_acquire gil;
@@ -330,6 +333,14 @@ bool step_scientific_bake_bridge(
         std::vector<uint16_t> ev_y = nb::cast<std::vector<uint16_t>>(tuple_res[2]);
         std::vector<int8_t> ev_p = nb::cast<std::vector<int8_t>>(tuple_res[3]);
         nb::bytes blurred_bytes = nb::cast<nb::bytes>(tuple_res[4]);
+
+        if (out_total_physical_events != nullptr) {
+            if (tuple_res.size() > 5) {
+                *out_total_physical_events = nb::cast<size_t>(tuple_res[5]);
+            } else {
+                *out_total_physical_events = ev_t.size();
+            }
+        }
 
         size_t n_ev = ev_t.size();
         out_events.clear();
@@ -351,6 +362,24 @@ bool step_scientific_bake_bridge(
     } catch (const std::exception& e) {
         std::cerr << "[ScientificBake] Simulation step error: " << e.what() << std::endl;
         return false;
+    }
+}
+
+void finalize_scientific_bake_bridge(
+    const std::vector<uint64_t>& imu_timestamps_us,
+    const std::vector<double>& imu_gyro_flat,
+    const std::vector<double>& imu_acc_flat,
+    const std::vector<uint64_t>& gt_timestamps_us,
+    const std::vector<double>& gt_pos_flat,
+    const std::vector<double>& gt_quat_flat
+) {
+    try {
+        nb::gil_scoped_acquire gil;
+        nb::object bake_mod = nb::module_::import_("hesim3d.sensor.scientific_bake");
+        nb::object fin_fn = bake_mod.attr("finalize_scientific_engine");
+        fin_fn(imu_timestamps_us, imu_gyro_flat, imu_acc_flat, gt_timestamps_us, gt_pos_flat, gt_quat_flat);
+    } catch (const std::exception& e) {
+        std::cerr << "[ScientificBake] Finalize error: " << e.what() << std::endl;
     }
 }
 

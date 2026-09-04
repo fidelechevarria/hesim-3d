@@ -27,7 +27,7 @@ def test_scientific_bake_engine_eiger_cuda_or_cpu():
     frames_bytes = b"".join(f.tobytes() for f in frames)
     ts = [0, 2000, 4000, 6000]
 
-    ev_t, ev_x, ev_y, ev_p, blurred_bytes = engine.process_aps_subsamples(
+    ev_t, ev_x, ev_y, ev_p, blurred_bytes, total_physical = engine.process_aps_subsamples(
         frames_bytes, ts, shutter_duration_us=4000
     )
 
@@ -47,7 +47,7 @@ def test_scientific_engine_global_singleton():
     frames_bytes = frames.tobytes()
     ts = [0, 5000]
 
-    ev_t, ev_x, ev_y, ev_p, blurred_bytes = step_scientific_engine(
+    ev_t, ev_x, ev_y, ev_p, blurred_bytes, total_physical = step_scientific_engine(
         frames_bytes, ts, shutter_duration_us=5000
     )
     assert len(blurred_bytes) == H * W * 3
@@ -71,7 +71,7 @@ def test_realistic_event_rates_and_hdf5_streaming(tmp_path):
     f_static = np.full((H, W, 3), 128, dtype=np.uint8)
     sub_bytes = np.stack([f_static, f_static], axis=0).tobytes()
     ts = [0, 1000]
-    ev_t, _, _, _, _ = engine.process_aps_subsamples(sub_bytes, ts, shutter_duration_us=1000)
+    ev_t, _, _, _, _, _ = engine.process_aps_subsamples(sub_bytes, ts, shutter_duration_us=1000)
     # 307,200 pixels over 1 ms should produce very low dark events (< 500)
     assert len(ev_t) < 500, f"Static scene should not explode with noise, got {len(ev_t)} events"
 
@@ -82,9 +82,10 @@ def test_realistic_event_rates_and_hdf5_streaming(tmp_path):
     f1[:, 100:200] = 220
     f2[:, 120:220] = 220
     dyn_bytes = np.stack([f1, f2], axis=0).tobytes()
-    ev_t, ev_x, ev_y, ev_p, _ = engine.process_aps_subsamples(dyn_bytes, ts, shutter_duration_us=1000)
+    ev_t, ev_x, ev_y, ev_p, _, total_physical = engine.process_aps_subsamples(dyn_bytes, ts, shutter_duration_us=1000)
     assert len(ev_t) > 1000, f"Moving edge must generate events, got {len(ev_t)}"
     assert len(ev_t) < 50000, f"Single sub-step events must remain bounded, got {len(ev_t)}"
+    assert total_physical >= len(ev_t)
 
     # 3. Verify streaming HDF5 writer works without RAM buffering
     h5_path = tmp_path / "streaming_test.h5"
@@ -96,5 +97,51 @@ def test_realistic_event_rates_and_hdf5_streaming(tmp_path):
         assert h5.attrs["format"] == "HESIM3D_HDF5"
         assert len(h5["events/t"]) == len(ev_t) * 5
         assert h5["events"].attrs["num_events"] == len(ev_t) * 5
+
+    # 4. Verify ScientificBakeEngine live direct-to-disk streaming
+    live_h5 = tmp_path / "live_engine_streaming.h5"
+    stream_engine = ScientificBakeEngine(
+        "alpsentek_eiger", 640, 480, event_threshold=0.18, refractory_period_us=10, output_path=live_h5
+    )
+    for _ in range(3):
+        stream_engine.process_aps_subsamples(dyn_bytes, ts, shutter_duration_us=1000)
+    stream_engine.finalize()
+
+    with h5py.File(live_h5, "r") as h5:
+        assert h5.attrs["format"] == "HESIM3D_HDF5"
+        assert h5["events"].attrs["num_events"] > 0
+        assert len(h5["frames/images"]) == 3
+
+
+def test_simulation_past_frame_17_no_blackout(tmp_path):
+    """Verify that frames 18-30 do not black out and retain events across the entire sequence."""
+    h5_path = tmp_path / "extended_sim.h5"
+    engine = ScientificBakeEngine(
+        "alpsentek_eiger", 640, 480, event_threshold=0.18, refractory_period_us=10, output_path=h5_path
+    )
+    H, W = 480, 640
+    frame_events_count = []
+
+    for frame_idx in range(30):
+        # Moving bar across frames
+        f1 = np.zeros((H, W, 3), dtype=np.uint8)
+        f2 = np.zeros((H, W, 3), dtype=np.uint8)
+        pos = (frame_idx * 15) % (W - 100)
+        f1[:, pos : pos + 60] = 240
+        f2[:, pos + 5 : pos + 65] = 240
+        dyn_bytes = np.stack([f1, f2], axis=0).tobytes()
+        ts = [frame_idx * 33333, frame_idx * 33333 + 16666]
+
+        ev_t, ev_x, ev_y, ev_p, _, total_physical = engine.process_aps_subsamples(dyn_bytes, ts, 16666)
+        frame_events_count.append(len(ev_t))
+        # Ensure that every frame after frame 17 receives events for display
+        if frame_idx >= 17:
+            assert len(ev_t) > 0, f"Frame {frame_idx} must not be black (0 events)"
+
+    engine.finalize()
+    # Confirm all 30 frames produced events
+    assert all(c > 0 for c in frame_events_count)
+    assert len(frame_events_count) == 30
+
 
 
