@@ -1705,8 +1705,14 @@ void GuiApp::render_simulation_progress_modal() {
     if (!is_simulating_) return;
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
+
+    // Dim background behind modal
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    bg->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 140));
+
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(520, 210), ImGuiCond_Always);
+    ImGui::SetNextWindowFocus();
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::Begin("H-ESIM Physics Simulation##Modal", nullptr, flags)) {
@@ -1714,9 +1720,51 @@ void GuiApp::render_simulation_progress_modal() {
         ImGui::Separator();
         ImGui::Spacing();
 
+        // Custom dual-contrast clipped high-contrast progress bar
         char prog_overlay[64];
-        std::snprintf(prog_overlay, sizeof(prog_overlay), "%.1f%%  [%d / %d f]", sim_progress_ * 100.0f, sim_current_frame_, sim_total_aps_frames_);
-        ImGui::ProgressBar(sim_progress_, ImVec2(-1, 26), prog_overlay);
+        std::snprintf(prog_overlay, sizeof(prog_overlay), "%.1f%%  [%d / %d f]",
+                      sim_progress_ * 100.0f, sim_current_frame_, sim_total_aps_frames_);
+
+        ImVec2 bar_pos = ImGui::GetCursorScreenPos();
+        float bar_w = ImGui::GetContentRegionAvail().x;
+        float bar_h = 26.0f;
+        ImGui::Dummy(ImVec2(bar_w, bar_h));
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        float rounding = 5.0f;
+        float fill_ratio = std::clamp(sim_progress_.load(), 0.0f, 1.0f);
+        float fill_w = bar_w * fill_ratio;
+
+        // Background track (dark charcoal)
+        dl->AddRectFilled(bar_pos, ImVec2(bar_pos.x + bar_w, bar_pos.y + bar_h), IM_COL32(32, 34, 40, 255), rounding);
+        dl->AddRect(bar_pos, ImVec2(bar_pos.x + bar_w, bar_pos.y + bar_h), IM_COL32(52, 56, 68, 255), rounding);
+
+        // Active fill bar (vibrant gold / amber)
+        if (fill_w > 1.0f) {
+            dl->AddRectFilled(bar_pos, ImVec2(bar_pos.x + fill_w, bar_pos.y + bar_h), IM_COL32(245, 178, 18, 255), rounding);
+        }
+
+        // Overlay text with dual-contrast clipping:
+        // Black text over yellow fill, white text over dark background track
+        ImVec2 text_size = ImGui::CalcTextSize(prog_overlay);
+        float text_x = bar_pos.x + bar_w - text_size.x - 12.0f;
+        float text_y = bar_pos.y + (bar_h - text_size.y) * 0.5f;
+        ImVec2 text_pos(text_x, text_y);
+
+        // Pass 1: Black text clipped to the filled yellow portion
+        if (fill_w > 0.0f) {
+            dl->PushClipRect(bar_pos, ImVec2(bar_pos.x + fill_w, bar_pos.y + bar_h), true);
+            dl->AddText(text_pos, IM_COL32(18, 20, 24, 255), prog_overlay);
+            dl->PopClipRect();
+        }
+
+        // Pass 2: White text clipped to the remaining unfilled dark track
+        if (fill_w < bar_w) {
+            dl->PushClipRect(ImVec2(bar_pos.x + fill_w, bar_pos.y), ImVec2(bar_pos.x + bar_w, bar_pos.y + bar_h), true);
+            dl->AddText(text_pos, IM_COL32(235, 238, 245, 255), prog_overlay);
+            dl->PopClipRect();
+        }
+
         ImGui::Spacing();
 
         if (font_mono_) ImGui::PushFont(font_mono_);

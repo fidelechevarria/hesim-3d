@@ -330,10 +330,12 @@ void GuiApp::render_timeline_panel() {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     }
 
-    // Draw clean horizontal splitter divider line
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-    ImU32 split_col = s_dragging_timeline ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
-    fg->AddLine(ImVec2(0, panel_y), ImVec2(total_w, panel_y), split_col, s_dragging_timeline ? 3.0f : 2.0f);
+    // Draw clean horizontal splitter divider line (hidden during simulation to avoid overlapping modals)
+    if (!is_simulating_) {
+        ImDrawList* bg = ImGui::GetBackgroundDrawList();
+        ImU32 split_col = s_dragging_timeline ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
+        bg->AddLine(ImVec2(0, panel_y), ImVec2(total_w, panel_y), split_col, s_dragging_timeline ? 3.0f : 2.0f);
+    }
 
     // Timeline Main Window
     ImGui::SetNextWindowPos(ImVec2(0, panel_y), ImGuiCond_Always);

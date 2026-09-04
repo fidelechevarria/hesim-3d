@@ -116,15 +116,17 @@ void GuiApp::render_multi_viewport_grid() {
         render_single_viewport(3, "Quadrant 4", viewport_views_[3]);
     }
 
-    // Draw clean visual splitter divider lines
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_2_SPLIT || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
-        ImU32 col_c = s_dragging_col ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
-        fg->AddLine(ImVec2(split_x, upper_y), ImVec2(split_x, upper_y + upper_h), col_c, s_dragging_col ? 3.0f : 2.0f);
-    }
-    if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
-        ImU32 row_c = s_dragging_row ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
-        fg->AddLine(ImVec2(0, upper_y + split_y), ImVec2(total_w, upper_y + split_y), row_c, s_dragging_row ? 3.0f : 2.0f);
+    // Draw clean visual splitter divider lines (hidden during simulation to avoid overlapping modals)
+    if (!is_simulating_) {
+        ImDrawList* bg = ImGui::GetBackgroundDrawList();
+        if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_2_SPLIT || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+            ImU32 col_c = s_dragging_col ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
+            bg->AddLine(ImVec2(split_x, upper_y), ImVec2(split_x, upper_y + upper_h), col_c, s_dragging_col ? 3.0f : 2.0f);
+        }
+        if (active_layout_ == MultiViewLayout::VIEW_4_GRID || active_layout_ == MultiViewLayout::VIEW_3_SPLIT) {
+            ImU32 row_c = s_dragging_row ? IM_COL32(0, 190, 255, 255) : IM_COL32(45, 48, 56, 255);
+            bg->AddLine(ImVec2(0, upper_y + split_y), ImVec2(total_w, upper_y + split_y), row_c, s_dragging_row ? 3.0f : 2.0f);
+        }
     }
 
     if (layout_settle_frames_ > 0) {
