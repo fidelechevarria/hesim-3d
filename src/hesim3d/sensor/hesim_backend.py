@@ -39,17 +39,21 @@ class HESIMEventSimulator(nn.Module):
 
         self.register_buffer("betas", torch.from_numpy(betas_arr).to(self.device))
         self.cfa_size = int(config.cfa_size)
-        self.theta_hw = float(config.theta_hw) * float(config.theta_scale)
+        contrast_th = float(getattr(config, "event_threshold", 0.20) or 0.20)
+        scale = float(getattr(config, "theta_scale", 1.0) or 1.0)
+        self.theta_hw = contrast_th * scale
         self.refractory_period_us = float(config.refractory_period_us)
 
-        # State tracking for refractory period and dark current
+        # State tracking for reference log-voltage and refractory period
         self.last_timestamp_map: Optional[torch.Tensor] = None
+        self.ref_log_voltage: Optional[torch.Tensor] = None
         self.rng = torch.Generator(device=self.device)
         self.rng.manual_seed(9527)
 
     def reset_state(self, height: int, width: int) -> None:
-        """Reset pixel internal timestamp tracking maps."""
+        """Reset pixel internal timestamp tracking and reference voltage maps."""
         self.last_timestamp_map = torch.zeros((height, width), device=self.device, dtype=torch.float64)
+        self.ref_log_voltage = None
 
     def _tile_betas_per_pixel(self, H: int, W: int) -> Dict[str, torch.Tensor]:
         """Broadcast CFA beta parameters to full image resolution."""
@@ -103,27 +107,33 @@ class HESIMEventSimulator(nn.Module):
         # Average intensity across interval
         Ic = 0.5 * (I0 + I1)
 
-        # Physical Log-Voltage Signal: S = ln(b1 * I1 + b2) - ln(b1 * I0 + b2)
-        V0 = torch.clamp(b1 * I0 + b2, min=1e-15)
-        V1 = torch.clamp(b1 * I1 + b2, min=1e-15)
-        S = torch.log(V1) - torch.log(V0)
+        # Current log voltage at end of interval
+        V1 = torch.log(torch.clamp(b1 * I1 + b2, min=1e-15))
+
+        # Initialize reference log voltage if needed
+        if self.ref_log_voltage is None or self.ref_log_voltage.shape != (H, W):
+            V0 = torch.log(torch.clamp(b1 * I0 + b2, min=1e-15))
+            self.ref_log_voltage = V0.clone()
+
+        # Physical Log-Voltage Signal S relative to pixel's reference state!
+        S = V1 - self.ref_log_voltage
 
         # Log-Voltage Noise Standard Deviation sigma_n(I)
-        # Denom = 2 * ((b3 * Ic)^2 + b4^2 + 2 * b5 * b3 * Ic * b4)
         var_inside = 2.0 * ((b3 * Ic) ** 2 + (b4 ** 2) + 2.0 * b5 * b3 * Ic * b4)
         var_inside = torch.clamp(var_inside, min=1e-15)
         denom_inside = torch.sqrt(var_inside)
         denom_1 = torch.clamp(b1 * Ic + b2, min=1e-15)
         sigma_n = denom_inside / denom_1
 
-        # Effective positive threshold voltage
+        # Effective positive and negative threshold voltages
         theta_pos = b0 * self.theta_hw
+        theta_neg = theta_pos
 
         # Probabilities of positive (ON) and negative (OFF) events
         z_on = (theta_pos - S) / torch.clamp(sigma_n, min=1e-15)
         P_on = gaussian_q(z_on)
 
-        z_off = (-theta_pos - S) / torch.clamp(sigma_n, min=1e-15)
+        z_off = (-theta_neg - S) / torch.clamp(sigma_n, min=1e-15)
         P_off = 1.0 - gaussian_q(z_off)
 
         # Add dark noise background rate
@@ -138,24 +148,23 @@ class HESIMEventSimulator(nn.Module):
         U = torch.rand((H, W), device=self.device, generator=self.rng)
         event_frame = torch.zeros((H, W), device=self.device, dtype=torch.int8)
 
-        th_pos = P_on
-        th_neg = torch.clamp(P_on + P_off, max=1.0)
-
-        mask_pos = U < th_pos
-        mask_neg = (U >= th_pos) & (U < th_neg)
-
         # Apply refractory period filtering
         dt_since_last = (t1_us - self.last_timestamp_map)
         valid_refractory = dt_since_last >= self.refractory_period_us
 
+        # Signal crossing or dark current trigger
+        mask_pos = ((U < P_on) & (S > 0.3 * theta_pos)) | (U < p_dark_pos)
+        mask_neg = ((U < P_off) & (S < -0.3 * theta_neg)) | (U >= (1.0 - p_dark_neg))
+
         active_pos = mask_pos & valid_refractory
-        active_neg = mask_neg & valid_refractory
+        active_neg = mask_neg & valid_refractory & (~active_pos)
 
         event_frame[active_pos] = 1
         event_frame[active_neg] = -1
 
-        # Update last timestamp for firing pixels
+        # Update reference log voltage and last timestamp for firing pixels
         fired_mask = active_pos | active_neg
+        self.ref_log_voltage[fired_mask] = V1[fired_mask]
         self.last_timestamp_map[fired_mask] = t1_us
 
         # Extract structured event tuples (t, x, y, p)

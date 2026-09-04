@@ -2374,7 +2374,7 @@ void GuiApp::render_simulation_progress_modal() {
         int eta_s = static_cast<int>(eta_sec) % 60;
 
         ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), ICON_MDI_CLOCK_OUTLINE " Elapsed: %02d:%02d | ETA: %02d:%02d | Rate: %s | %zu Events",
-                           el_m, el_s, eta_m, eta_s, rate_str, sim_events_.size());
+                           el_m, el_s, eta_m, eta_s, rate_str, sim_total_events_);
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -2463,7 +2463,7 @@ void GuiApp::render_export_dataset_modal() {
         ImGui::BeginChild("##ExportSummaryBox", ImVec2(0, 130), true);
 
         // Calculate approximate size in MB
-        double event_bytes = static_cast<double>(sim_events_.size()) * 16.0;
+        double event_bytes = static_cast<double>(sim_total_events_) * 16.0;
         double aps_bytes = static_cast<double>(sim_aps_frames_.size()) * (sensor_tex_w_ * sensor_tex_h_ * 3.0);
         double est_total_mb = (event_bytes + aps_bytes) / (1024.0 * 1024.0);
 
@@ -2482,7 +2482,7 @@ void GuiApp::render_export_dataset_modal() {
         ImGui::NextColumn();
 
         ImGui::Text("Total Events:"); ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.95f, 0.6f, 1.0f), "%zu events", sim_events_.size());
+        ImGui::TextColored(ImVec4(0.4f, 0.95f, 0.6f, 1.0f), "%zu events", sim_total_events_);
 
         ImGui::Text("APS Frames:"); ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.4f, 0.95f, 0.6f, 1.0f), "%zu frames", sim_aps_frames_.size());
@@ -2582,6 +2582,7 @@ void GuiApp::start_simulation_bake() {
 
     sim_aps_frames_.clear();
     sim_events_.clear();
+    sim_total_events_ = 0;
     sim_aps_frames_.reserve(sim_total_aps_frames_);
 
     sim_accum_buf_.assign(sensor_tex_w_ * sensor_tex_h_ * 3, 0.0f);
@@ -2666,7 +2667,15 @@ void GuiApp::step_simulation_bake() {
             );
 
             if (step_ok) {
-                sim_events_.insert(sim_events_.end(), frame_events.begin(), frame_events.end());
+                sim_total_events_ += frame_events.size();
+                if (sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
+                    size_t available = MAX_IN_MEMORY_EVENTS - sim_events_.size();
+                    if (frame_events.size() <= available) {
+                        sim_events_.insert(sim_events_.end(), frame_events.begin(), frame_events.end());
+                    } else {
+                        sim_events_.insert(sim_events_.end(), frame_events.begin(), frame_events.begin() + available);
+                    }
+                }
                 sim_aps_frames_.push_back({frame_t, std::move(blurred_aps_frame)});
             }
             sim_current_frame_++;
@@ -2674,7 +2683,7 @@ void GuiApp::step_simulation_bake() {
 
         sim_progress_ = static_cast<float>(sim_current_frame_) / static_cast<float>(sim_total_aps_frames_);
         sim_status_text_ = "PyTorch CUDA: Frame " + std::to_string(sim_current_frame_) + " / " +
-                           std::to_string(sim_total_aps_frames_) + " (" + std::to_string(sim_events_.size()) + " physical events)...";
+                           std::to_string(sim_total_aps_frames_) + " (" + std::to_string(sim_total_events_) + " physical events)...";
 
         if (sim_current_frame_ >= sim_total_aps_frames_) {
             finalize_simulation_bake();
@@ -2735,7 +2744,10 @@ void GuiApp::step_simulation_bake() {
                                 double ev_t = sub_t_prev + ((k + 0.5) / n_events) * sub_dt;
                                 if (ev_t > duration) ev_t = duration;
                                 if (ev_t - sim_last_event_time_[p_idx] >= refr_sec) {
-                                    sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
+                                    sim_total_events_++;
+                                    if (sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
+                                        sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
+                                    }
                                     sim_last_event_time_[p_idx] = ev_t;
                                 }
                             }
@@ -2746,7 +2758,10 @@ void GuiApp::step_simulation_bake() {
                                 double ev_t = sub_t_prev + ((k + 0.5) / n_events) * sub_dt;
                                 if (ev_t > duration) ev_t = duration;
                                 if (ev_t - sim_last_event_time_[p_idx] >= refr_sec) {
-                                    sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                                    sim_total_events_++;
+                                    if (sim_events_.size() < MAX_IN_MEMORY_EVENTS) {
+                                        sim_events_.push_back({ev_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                                    }
                                     sim_last_event_time_[p_idx] = ev_t;
                                 }
                             }
@@ -2806,7 +2821,9 @@ void GuiApp::finalize_simulation_bake() {
                          return a.timestamp_sec < b.timestamp_sec;
                      });
 
-    sim_total_events_ = sim_events_.size();
+    if (sim_total_events_ == 0) {
+        sim_total_events_ = sim_events_.size();
+    }
     sim_total_frames_ = sim_aps_frames_.size();
     simulation_has_data_ = true;
     trajectory_dirty_since_sim_ = false;

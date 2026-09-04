@@ -43,9 +43,7 @@ class ScientificBakeEngine:
         # Apply user contrast threshold (C) tuning
         if event_threshold is not None and event_threshold > 0:
             self.config.event_threshold = float(event_threshold)
-            # Modulate theta_scale relative to standard baseline
-            base_th = getattr(self.config, "default_event_threshold", 0.20) or 0.20
-            self.config.theta_scale = float(event_threshold) / base_th
+            self.config.theta_scale = 1.0
 
         # Apply user refractory period (us) tuning
         if refractory_period_us is not None and refractory_period_us > 0:
@@ -144,8 +142,8 @@ class ScientificBakeEngine:
             sub_frame_rgb = frames_array[s]
             t_us = int(sub_timestamps_us[s])
 
-            # 1. Physical Sensor ISP: sRGB -> Linear Radiance -> Inverse CCM -> CFA Mosaic + Poisson-Gaussian Noise
-            raw_mosaic = self.isp.srgb_to_raw(sub_frame_rgb, add_noise=True)
+            # 1. Physical Sensor ISP: sRGB -> Linear Radiance -> Inverse CCM -> CFA Mosaic
+            raw_mosaic = self.isp.srgb_to_raw(sub_frame_rgb, add_noise=False)
 
             # 2. Accumulate optical radiance during shutter open interval [frame_start, shutter_end]
             if t_us <= shutter_end_t_us or accum_count == 0:
@@ -181,10 +179,13 @@ class ScientificBakeEngine:
             ev_y = np.empty(0, dtype=np.uint16)
             ev_p = np.empty(0, dtype=np.int8)
 
-        # 6. Synthesize blurred APS frame with real physical exposure integration
+        # 6. Synthesize blurred APS frame with real physical exposure integration & Poisson-Gaussian readout noise
         if accum_count > 0:
             mean_raw = accum_raw / accum_count
-            blurred_rgb = self.isp.raw_to_rgb_preview(mean_raw)
+            var = np.maximum(1e-10, self.config.aps_noise_beta1 * mean_raw + self.config.aps_noise_beta2)
+            noise = np.random.normal(0.0, 1.0, size=mean_raw.shape).astype(np.float32) * np.sqrt(var)
+            noisy_raw = np.clip(mean_raw + noise, 0.0, 1.0)
+            blurred_rgb = self.isp.raw_to_rgb_preview(noisy_raw)
         else:
             blurred_rgb = frames_array[0]
 

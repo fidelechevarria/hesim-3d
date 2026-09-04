@@ -218,6 +218,7 @@ private:
     bool simulation_has_data_{false};
     size_t sim_total_events_{0};
     size_t sim_total_frames_{0};
+    static constexpr size_t MAX_IN_MEMORY_EVENTS = 10'000'000;
 
     // Incremental simulation bake state
     bool trajectory_dirty_since_sim_{false};

@@ -120,7 +120,7 @@ class Simulator:
                 self.renderer.render_frame(rgb_frame, t_us)
 
                 # 3. Transform via Sensor ISP to raw mosaic
-                raw_mosaic = self.isp.srgb_to_raw(rgb_frame, add_noise=True)
+                raw_mosaic = self.isp.srgb_to_raw(rgb_frame, add_noise=False)
                 raw_tensor = torch.from_numpy(raw_mosaic)
 
                 # 4. Generate neuromorphic events via H-ESIM
@@ -159,7 +159,10 @@ class Simulator:
                         total_frames_generated += 1
                         if aps_accum_count > 0:
                             mean_raw = aps_accum_raw / aps_accum_count
-                            blurred_rgb = self.isp.raw_to_rgb_preview(mean_raw)
+                            var = np.maximum(1e-10, self.sensor_config.aps_noise_beta1 * mean_raw + self.sensor_config.aps_noise_beta2)
+                            noise = np.random.normal(0.0, 1.0, size=mean_raw.shape).astype(np.float32) * np.sqrt(var)
+                            noisy_raw = np.clip(mean_raw + noise, 0.0, 1.0)
+                            blurred_rgb = self.isp.raw_to_rgb_preview(noisy_raw)
                         else:
                             blurred_rgb = rgb_frame.copy()
 
