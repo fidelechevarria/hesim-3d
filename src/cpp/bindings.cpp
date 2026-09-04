@@ -10,6 +10,7 @@
 
 #ifdef HESIM3D_ENABLE_GUI
 #include "gui/gui_app.h"
+#include <iostream>
 #endif
 
 namespace nb = nanobind;
@@ -150,3 +151,107 @@ NB_MODULE(_hesim3d_core, m) {
           "Launch interactive Dear ImGui desktop visualizer");
 #endif
 }
+
+#ifdef HESIM3D_ENABLE_GUI
+namespace hesim3d {
+
+bool export_simulation_to_hdf5(
+    const std::string& path,
+    const std::string& sensor_name,
+    const std::vector<SimulatedEvent>& events,
+    const std::vector<SimulatedApsFrame>& frames,
+    int width, int height,
+    const SE3Spline& spline,
+    double duration_sec
+) {
+    try {
+        nb::gil_scoped_acquire gil;
+
+        size_t n_ev = events.size();
+        std::vector<uint64_t> ev_t(n_ev);
+        std::vector<uint16_t> ev_x(n_ev);
+        std::vector<uint16_t> ev_y(n_ev);
+        std::vector<int8_t> ev_p(n_ev);
+        for (size_t i = 0; i < n_ev; ++i) {
+            ev_t[i] = static_cast<uint64_t>(events[i].timestamp_sec * 1e6);
+            ev_x[i] = events[i].x;
+            ev_y[i] = events[i].y;
+            ev_p[i] = events[i].polarity;
+        }
+
+        size_t n_frames = frames.size();
+        std::vector<uint64_t> frame_ts(n_frames);
+        std::vector<uint8_t> frame_bytes;
+        frame_bytes.reserve(n_frames * width * height * 3);
+        for (size_t i = 0; i < n_frames; ++i) {
+            frame_ts[i] = static_cast<uint64_t>(frames[i].timestamp_sec * 1e6);
+            frame_bytes.insert(frame_bytes.end(), frames[i].rgb_preview.begin(), frames[i].rgb_preview.end());
+        }
+
+        double dur = std::max(0.1, duration_sec);
+        int imu_samples = static_cast<int>(std::ceil(dur * 200.0)) + 1;
+        std::vector<uint64_t> imu_ts(imu_samples);
+        std::vector<double> imu_gyro(imu_samples * 3);
+        std::vector<double> imu_acc(imu_samples * 3);
+        std::vector<uint64_t> gt_ts(imu_samples);
+        std::vector<double> gt_pos(imu_samples * 3);
+        std::vector<double> gt_quat(imu_samples * 4);
+
+        for (int i = 0; i < imu_samples; ++i) {
+            double t = std::min(dur, i * (dur / std::max(1, imu_samples - 1)));
+            uint64_t t_us = static_cast<uint64_t>(t * 1e6);
+            imu_ts[i] = t_us;
+            gt_ts[i] = t_us;
+
+            hesim3d::TrajectorySample s = spline.evaluate(t);
+            imu_gyro[i * 3 + 0] = s.angular_velocity_body.x();
+            imu_gyro[i * 3 + 1] = s.angular_velocity_body.y();
+            imu_gyro[i * 3 + 2] = s.angular_velocity_body.z();
+
+            imu_acc[i * 3 + 0] = s.imu_acceleration.x();
+            imu_acc[i * 3 + 1] = s.imu_acceleration.y();
+            imu_acc[i * 3 + 2] = s.imu_acceleration.z();
+
+            gt_pos[i * 3 + 0] = s.position.x();
+            gt_pos[i * 3 + 1] = s.position.y();
+            gt_pos[i * 3 + 2] = s.position.z();
+
+            gt_quat[i * 4 + 0] = s.orientation.x();
+            gt_quat[i * 4 + 1] = s.orientation.y();
+            gt_quat[i * 4 + 2] = s.orientation.z();
+            gt_quat[i * 4 + 3] = s.orientation.w();
+        }
+
+        nb::object writer_mod = nb::module_::import_("hesim3d.io.hdf5_writer");
+        nb::object export_fn = writer_mod.attr("export_baked_simulation");
+
+        nb::bytes py_bytes(frame_bytes.data(), frame_bytes.size());
+
+        nb::object result = export_fn(
+            path,
+            sensor_name,
+            width,
+            height,
+            static_cast<int>(n_frames),
+            ev_t,
+            ev_x,
+            ev_y,
+            ev_p,
+            py_bytes,
+            frame_ts,
+            imu_ts,
+            imu_gyro,
+            imu_acc,
+            gt_ts,
+            gt_pos,
+            gt_quat
+        );
+        return nb::cast<bool>(result);
+    } catch (const std::exception& e) {
+        std::cerr << "[GuiApp] Failed to export HDF5 dataset: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+} // namespace hesim3d
+#endif

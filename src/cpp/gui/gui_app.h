@@ -78,7 +78,7 @@ struct GuiConfig {
     double sim_fps{1000.0};
     double event_threshold{0.20};
     double exposure_ms{10.0};
-    double accumulation_window_ms{20.0};
+    double accumulation_window_ms{33.33};
     std::string font_dir{""};
 };
 
@@ -118,6 +118,8 @@ private:
     std::atomic<bool> is_recording_{false};
     std::string recording_output_path_{"recorded_dataset.h5"};
     std::string current_trajectory_file_{"custom_trajectory.json"};
+    std::string export_status_msg_{""};
+    float export_status_timer_{0.0f};
 
     double current_time_sec_{0.0};
     double playback_speed_{1.0};
@@ -289,5 +291,15 @@ private:
 };
 
 int launch_gui(const GuiConfig& config);
+
+bool export_simulation_to_hdf5(
+    const std::string& path,
+    const std::string& sensor_name,
+    const std::vector<SimulatedEvent>& events,
+    const std::vector<SimulatedApsFrame>& frames,
+    int width, int height,
+    const SE3Spline& spline,
+    double duration_sec
+);
 
 } // namespace hesim3d

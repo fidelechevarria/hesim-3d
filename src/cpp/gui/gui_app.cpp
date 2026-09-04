@@ -1814,21 +1814,27 @@ void GuiApp::step_simulation_bake() {
         int f = sim_current_frame_;
         double frame_t = f * sim_dt_aps_;
         std::fill(sim_accum_buf_.begin(), sim_accum_buf_.end(), 0.0f);
+        int aps_accum_count = 0;
 
-        // Sub-sample exposure integration: I_APS = 1/T int_0^T I(t) dt
+        // Sub-sample exposure integration across the entire frame interval [frame_t, frame_t + sim_dt_aps_]
         for (int s = 0; s < sim_sub_samples_; ++s) {
-            double sub_t = frame_t + ((s + 0.5) / sim_sub_samples_) * sim_exposure_sec_;
+            double sample_rel_t = ((s + 0.5) / sim_sub_samples_) * sim_dt_aps_;
+            double sub_t = frame_t + sample_rel_t;
             if (sub_t > duration) sub_t = std::fmod(sub_t, duration);
 
             TrajectorySample ts = spline_.evaluate(sub_t);
             renderer_->set_camera_pose(ts.position, ts.orientation);
             renderer_->render_frame(sim_sub_render_buf_.data(), sim_sub_render_buf_.size(), static_cast<uint64_t>(sub_t * 1e6));
 
-            for (size_t i = 0; i < sim_sub_render_buf_.size(); ++i) {
-                sim_accum_buf_[i] += sim_sub_render_buf_[i];
+            // Integrate APS exposure within shutter duration (or all sub-samples if exposure >= dt)
+            if (sample_rel_t <= sim_exposure_sec_ || sim_exposure_sec_ >= sim_dt_aps_ || s == 0) {
+                for (size_t i = 0; i < sim_sub_render_buf_.size(); ++i) {
+                    sim_accum_buf_[i] += sim_sub_render_buf_[i];
+                }
+                aps_accum_count++;
             }
 
-            // High-rate EVS event emission from sub-samples
+            // Continuous EVS event emission with refractory reference tracking
             for (size_t y = 0; y < sensor_tex_h_; ++y) {
                 for (size_t x = 0; x < sensor_tex_w_; ++x) {
                     size_t p_idx = (y * sensor_tex_w_ + x);
@@ -1838,27 +1844,37 @@ void GuiApp::step_simulation_bake() {
                     float lum = 0.299f * r + 0.587f * g + 0.114f * b;
                     float log_lum = std::log(std::max(1.0f, lum));
 
-                    if (f > 0 || s > 0) {
+                    if (f == 0 && s == 0) {
+                        sim_prev_log_lum_[p_idx] = log_lum;
+                    } else {
                         float diff = log_lum - sim_prev_log_lum_[p_idx];
-                        if (diff > thr) {
-                            sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
-                        } else if (diff < -thr) {
-                            sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                        if (diff >= thr) {
+                            int n_events = static_cast<int>(diff / thr);
+                            for (int k = 0; k < n_events; ++k) {
+                                sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), 1});
+                            }
+                            sim_prev_log_lum_[p_idx] += n_events * thr;
+                        } else if (diff <= -thr) {
+                            int n_events = static_cast<int>(-diff / thr);
+                            for (int k = 0; k < n_events; ++k) {
+                                sim_events_.push_back({sub_t, static_cast<uint16_t>(x), static_cast<uint16_t>(y), -1});
+                            }
+                            sim_prev_log_lum_[p_idx] -= n_events * thr;
                         }
                     }
-                    sim_prev_log_lum_[p_idx] = log_lum;
                 }
             }
         }
 
         // Apply physical Poisson-Gaussian sensor noise to blurred frame
+        float aps_inv = (aps_accum_count > 0) ? (1.0f / aps_accum_count) : inv_s;
         std::vector<uint8_t> blurred_frame(sensor_tex_w_ * sensor_tex_h_ * 3);
         for (size_t y = 0; y < sensor_tex_h_; ++y) {
             for (size_t x = 0; x < sensor_tex_w_; ++x) {
                 size_t p_idx = (y * sensor_tex_w_ + x) * 3;
-                float mean_r = sim_accum_buf_[p_idx] * inv_s;
-                float mean_g = sim_accum_buf_[p_idx + 1] * inv_s;
-                float mean_b = sim_accum_buf_[p_idx + 2] * inv_s;
+                float mean_r = sim_accum_buf_[p_idx] * aps_inv;
+                float mean_g = sim_accum_buf_[p_idx + 1] * aps_inv;
+                float mean_b = sim_accum_buf_[p_idx + 2] * aps_inv;
 
                 // Shot & read noise simulation
                 float noise = ((std::rand() % 100) - 50) * 0.08f;
@@ -1930,10 +1946,14 @@ void GuiApp::update_simulated_viewport_buffers() {
         }
     }
 
-    // 2. Accumulate EVS events in [current_time_sec_ - accumulation_window, current_time_sec_]
-    double window_sec = config_.accumulation_window_ms / 1000.0;
+    // 2. Accumulate EVS events in [t_start, t_end]
+    double window_sec = std::max(sim_dt_aps_, config_.accumulation_window_ms / 1000.0);
     double t_end = current_time_sec_;
-    double t_start = std::max(0.0, t_end - window_sec);
+    double t_start = t_end - window_sec;
+    if (t_start < 0.0) {
+        t_start = 0.0;
+        t_end = std::max(t_end, window_sec);
+    }
 
     for (size_t i = 0; i < sensor_tex_w_ * sensor_tex_h_; ++i) {
         evs_img_buffer_[i * 3 + 0] = 24;
@@ -1972,13 +1992,29 @@ void GuiApp::update_simulated_viewport_buffers() {
 bool GuiApp::export_simulated_dataset(const std::string& path) {
     if (!simulation_has_data_) return false;
     save_trajectory_to_json("recorded_trajectory.json");
-    std::cout << "[GuiApp] Successfully exported dataset metadata ("
-              << sim_total_events_ << " events, "
-              << sim_total_frames_ << " APS frames) to " << path << std::endl;
-    return true;
+    bool ok = export_simulation_to_hdf5(
+        path,
+        config_.sensor_name,
+        sim_events_,
+        sim_aps_frames_,
+        sensor_tex_w_,
+        sensor_tex_h_,
+        spline_,
+        config_.duration_sec
+    );
+    if (ok) {
+        std::cout << "[GuiApp] Successfully exported HDF5 dataset ("
+                  << sim_events_.size() << " events, "
+                  << sim_aps_frames_.size() << " APS frames) to " << path << std::endl;
+    }
+    return ok;
 }
 
 void GuiApp::update_simulation_step(double dt) {
+    if (export_status_timer_ > 0.0f) {
+        export_status_timer_ -= static_cast<float>(dt);
+    }
+
     if (is_simulating_) {
         step_simulation_bake();
         return;

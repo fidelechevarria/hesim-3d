@@ -267,9 +267,26 @@ void GuiApp::render_header_bar() {
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.42f, 0.70f, 1.0f));
                 if (ImGui::Button(ICON_MDI_DOWNLOAD " Export (.h5)", ImVec2(125, 22))) {
-                    export_simulated_dataset(recording_output_path_);
+                    if (export_simulated_dataset(recording_output_path_)) {
+                        export_status_msg_ = "Saved " + recording_output_path_;
+                        export_status_timer_ = 6.0f;
+                    } else {
+                        export_status_msg_ = "Export failed";
+                        export_status_timer_ = 6.0f;
+                    }
                 }
                 ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Export full dataset to %s (HDF5 format)", recording_output_path_.c_str());
+                }
+
+                if (export_status_timer_ > 0.0f) {
+                    ImGui::SameLine();
+                    ImVec4 col = (export_status_msg_.find("failed") != std::string::npos)
+                        ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                        : ImVec4(0.35f, 1.0f, 0.45f, 1.0f);
+                    ImGui::TextColored(col, "%s", export_status_msg_.c_str());
+                }
                 ImGui::SameLine();
                 if (ImGui::Button(ICON_MDI_ARROW_LEFT " Return to Studio", ImVec2(150, 22))) {
                     set_app_mode(AppMode::TRAJECTORY_STUDIO);

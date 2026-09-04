@@ -109,3 +109,68 @@ class HDF5DatasetWriter:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
+
+
+def export_baked_simulation(
+    output_path: str,
+    sensor_name: str,
+    width: int,
+    height: int,
+    num_frames: int,
+    event_t: list,
+    event_x: list,
+    event_y: list,
+    event_p: list,
+    frame_bytes: bytes,
+    frame_timestamps_us: list,
+    imu_timestamps_us: list,
+    imu_gyro_flat: list,
+    imu_acc_flat: list,
+    gt_timestamps_us: list,
+    gt_pos_flat: list,
+    gt_quat_flat: list,
+) -> bool:
+    """
+    Export raw simulation arrays directly to a standardized HDF5 dataset.
+    """
+    out_p = Path(output_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        cfg = SensorConfig.from_preset(sensor_name)
+    except Exception:
+        cfg = SensorConfig(name=sensor_name, width=width, height=height)
+    cfg.width = int(width)
+    cfg.height = int(height)
+
+    with HDF5DatasetWriter(out_p, cfg) as writer:
+        # 1. Events
+        if len(event_t) > 0:
+            dtype = [("t", np.uint64), ("x", np.uint16), ("y", np.uint16), ("p", np.int8)]
+            ev_arr = np.empty(len(event_t), dtype=dtype)
+            ev_arr["t"] = np.asarray(event_t, dtype=np.uint64)
+            ev_arr["x"] = np.asarray(event_x, dtype=np.uint16)
+            ev_arr["y"] = np.asarray(event_y, dtype=np.uint16)
+            ev_arr["p"] = np.asarray(event_p, dtype=np.int8)
+            writer.write_events(ev_arr)
+
+        # 2. Frames
+        if num_frames > 0 and len(frame_bytes) > 0:
+            frames_arr = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((num_frames, height, width, 3))
+            for i in range(num_frames):
+                writer.write_frame(frames_arr[i], int(frame_timestamps_us[i]))
+
+        # 3. IMU
+        if len(imu_timestamps_us) > 0:
+            imu_g = np.asarray(imu_gyro_flat, dtype=np.float64).reshape((-1, 3))
+            imu_a = np.asarray(imu_acc_flat, dtype=np.float64).reshape((-1, 3))
+            for j in range(len(imu_timestamps_us)):
+                writer.write_imu(int(imu_timestamps_us[j]), imu_g[j], imu_a[j])
+
+        # 4. Ground Truth
+        if len(gt_timestamps_us) > 0:
+            gt_p = np.asarray(gt_pos_flat, dtype=np.float64).reshape((-1, 3))
+            gt_q = np.asarray(gt_quat_flat, dtype=np.float64).reshape((-1, 4))
+            for k in range(len(gt_timestamps_us)):
+                writer.write_ground_truth_pose(int(gt_timestamps_us[k]), gt_p[k], gt_q[k])
+
+    return True

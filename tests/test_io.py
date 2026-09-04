@@ -59,3 +59,63 @@ def test_mcap_dataset_writer():
 
         assert mcap_path.exists()
         assert mcap_path.stat().st_size > 0
+
+
+def test_export_baked_simulation():
+    from hesim3d.io.hdf5_writer import export_baked_simulation
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_h5 = Path(tmpdir) / "test_gui_export.h5"
+
+        num_frames = 2
+        w, h = 64, 48
+        frame_bytes = (np.random.randint(0, 256, (num_frames, h, w, 3), dtype=np.uint8)).tobytes()
+        frame_ts = [0, 33333]
+
+        ev_t = [1000, 2000, 3000]
+        ev_x = [10, 20, 30]
+        ev_y = [5, 15, 25]
+        ev_p = [1, -1, 1]
+
+        imu_ts = [0, 10000, 20000]
+        imu_gyro = [0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.1, 0.2, 0.3]
+        imu_acc = [0.0, 0.0, 9.81, 0.0, 0.0, 9.81, 0.0, 0.0, 9.81]
+
+        gt_ts = [0, 10000, 20000]
+        gt_pos = [0.0, 1.0, 2.0, 0.1, 1.1, 2.1, 0.2, 1.2, 2.2]
+        gt_quat = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+
+        ok = export_baked_simulation(
+            output_path=str(out_h5),
+            sensor_name="alpsentek_eiger",
+            width=w,
+            height=h,
+            num_frames=num_frames,
+            event_t=ev_t,
+            event_x=ev_x,
+            event_y=ev_y,
+            event_p=ev_p,
+            frame_bytes=frame_bytes,
+            frame_timestamps_us=frame_ts,
+            imu_timestamps_us=imu_ts,
+            imu_gyro_flat=imu_gyro,
+            imu_acc_flat=imu_acc,
+            gt_timestamps_us=gt_ts,
+            gt_pos_flat=gt_pos,
+            gt_quat_flat=gt_quat,
+        )
+
+        assert ok is True
+        assert out_h5.exists()
+
+        with h5py.File(out_h5, "r") as f:
+            assert f.attrs["format"] == "HESIM3D_HDF5"
+            assert "events/t" in f
+            assert len(f["events/t"]) == 3
+            assert "frames/images" in f
+            assert f["frames/images"].shape == (2, h, w, 3)
+            assert len(f["imu/timestamps_us"]) == 3
+            assert f["imu/angular_velocity"].shape == (3, 3)
+            assert len(f["ground_truth/timestamps_us"]) == 3
+            assert f["ground_truth/position"].shape == (3, 3)
+
