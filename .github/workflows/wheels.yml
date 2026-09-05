@@ -41,7 +41,8 @@ jobs:
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y libX11-devel mesa-libGL-devel vulkan-loader-devel
+            dnf install -y libX11-devel mesa-libGL-devel vulkan-loader-devel libXcursor-devel libXrandr-devel libXinerama-devel libXi-devel
+
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} --exclude libGL.so.1 --exclude libvulkan.so.1 --exclude libX11.so.6 --exclude libxcb.so.1 --exclude libXau.so.6 --exclude libXdmcp.so.6
           CIBW_TEST_REQUIRES: "pytest>=7.0.0"
