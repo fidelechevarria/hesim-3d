@@ -213,16 +213,26 @@ void GuiApp::init_sensor_presets() {
                                 1280, 720, 70.0, 0.0, 0.0, false, 0.15, 3});
 
   // Sync from local JSON presets if present
-  std::filesystem::path preset_dirs[] = {
-      "assets/sensor_presets", "../assets/sensor_presets", "../../assets/sensor_presets",
-      "/home/fidelechevarria/repos/hesim-3d/assets/sensor_presets"};
   std::filesystem::path resolved_pdir;
-  for (const auto& p : preset_dirs) {
-    if (std::filesystem::exists(p)) {
-      resolved_pdir = p;
-      break;
+  if (!config_.font_dir.empty()) {
+    std::filesystem::path cand =
+        std::filesystem::path(config_.font_dir).parent_path() / "sensor_presets";
+    if (std::filesystem::exists(cand)) {
+      resolved_pdir = cand;
     }
   }
+  if (resolved_pdir.empty()) {
+    std::filesystem::path preset_dirs[] = {"assets_data/sensor_presets", "assets/sensor_presets",
+                                           "../assets/sensor_presets",
+                                           "../../assets/sensor_presets"};
+    for (const auto& p : preset_dirs) {
+      if (std::filesystem::exists(p)) {
+        resolved_pdir = p;
+        break;
+      }
+    }
+  }
+
   if (!resolved_pdir.empty()) {
     for (auto& preset : available_sensors_) {
       std::filesystem::path jf = resolved_pdir / (preset.id + ".json");
@@ -2044,8 +2054,8 @@ bool GuiApp::init() {
   // -------------------------------------------------------------------------
   std::filesystem::path font_dir = config_.font_dir;
   if (font_dir.empty() || !std::filesystem::exists(font_dir)) {
-    std::filesystem::path candidates[] = {"assets/fonts", "../assets/fonts", "../../assets/fonts",
-                                          "/home/fidelechevarria/repos/hesim-3d/assets/fonts"};
+    std::filesystem::path candidates[] = {"assets_data/fonts", "assets/fonts", "../assets/fonts",
+                                          "../../assets/fonts"};
     for (const auto& cand : candidates) {
       if (std::filesystem::exists(cand)) {
         font_dir = cand;

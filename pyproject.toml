@@ -69,6 +69,7 @@ sdist.exclude = [
     "docs/**/*",
     "outputs/**/*",
     "*.cache",
+    "src/hesim3d/*.so*",
 ]
 
 [tool.scikit-build.cmake.define]

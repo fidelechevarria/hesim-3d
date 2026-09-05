@@ -29,7 +29,10 @@ FetchContent_Declare(
     URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
-FetchContent_MakeAvailable(eigen)
+FetchContent_GetProperties(eigen)
+if(NOT eigen_POPULATED)
+    FetchContent_Populate(eigen)
+endif()
 set(EIGEN3_INCLUDE_DIR ${eigen_SOURCE_DIR})
 
 # -----------------------------------------------------------------------------
@@ -214,9 +217,13 @@ install(FILES
     DESTINATION hesim3d
 )
 
+# Install packaged runtime assets (fonts, presets, builtin scenes)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts" DESTINATION hesim3d/assets_data)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/scenes" DESTINATION hesim3d/assets_data)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/sensor_presets" DESTINATION hesim3d/assets_data)
+
 add_custom_command(TARGET _hesim3d_core POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_hesim3d_core> "${CMAKE_CURRENT_SOURCE_DIR}/src/hesim3d/"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_SOURCE_DIR}/.venv/lib/python3.12/site-packages/hesim3d/"
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_hesim3d_core> "${CMAKE_CURRENT_SOURCE_DIR}/.venv/lib/python3.12/site-packages/hesim3d/"
-    COMMENT "Auto-syncing _hesim3d_core to src/hesim3d/ and .venv site-packages"
+    COMMENT "Auto-syncing _hesim3d_core to src/hesim3d/"
 )
+

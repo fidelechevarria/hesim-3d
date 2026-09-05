@@ -47,12 +47,13 @@ def download_scene(
         meta = scene_id_or_meta
 
     # 1. Built-in scene resolution
-    if meta.built_in:
-        repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        if meta.local_rel_path:
-            local_p = repo_root / meta.local_rel_path
-            if local_p.exists():
-                return local_p
+    if meta.built_in and meta.local_rel_path:
+        from . import get_asset_path
+        subpath = meta.local_rel_path.replace("assets/", "", 1)
+        resolved = get_asset_path(subpath)
+        if resolved.exists():
+            return resolved
+
 
     # 2. Check cache directory
     cache_dir = get_cache_dir()

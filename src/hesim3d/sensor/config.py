@@ -78,11 +78,13 @@ class SensorConfig:
     @classmethod
     def from_preset(cls, name: str) -> SensorConfig:
         name_clean = name.strip().lower()
-        preset_dir = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "sensor_presets"
+        from hesim3d.assets import get_asset_path
+        preset_dir = get_asset_path("sensor_presets")
 
         target_file = preset_dir / f"{name_clean}.json"
         if target_file.exists():
             return cls.load_json(target_file)
+
 
         # Built-in fallbacks
         if "eiger" in name_clean or "alpsentek" in name_clean:
