@@ -1,397 +1,395 @@
 #include "filament_renderer.h"
+
 #include <backend/PixelBufferDescriptor.h>
 #include <math/mat4.h>
 #include <math/vec3.h>
 #include <utils/EntityManager.h>
-#include <iostream>
-#include <cstring>
+
 #include <cmath>
+#include <cstring>
+#include <iostream>
 #include <numbers>
 
 namespace hesim3d {
 
 FilamentRenderer::FilamentRenderer(uint32_t width, uint32_t height, const std::string& backend_type)
     : width_(width), height_(height), backend_str_(backend_type) {
-    readback_scratch_.resize(width_ * height_ * 3, 0);
-    init_engine();
+  readback_scratch_.resize(width_ * height_ * 3, 0);
+  init_engine();
 }
 
-FilamentRenderer::~FilamentRenderer() {
-    cleanup();
-}
+FilamentRenderer::~FilamentRenderer() { cleanup(); }
 
 void FilamentRenderer::init_engine() {
-    filament::Engine::Backend backend = filament::Engine::Backend::VULKAN;
-    if (backend_str_ == "opengl") {
-        backend = filament::Engine::Backend::OPENGL;
-    }
+  filament::Engine::Backend backend = filament::Engine::Backend::VULKAN;
+  if (backend_str_ == "opengl") {
+    backend = filament::Engine::Backend::OPENGL;
+  }
 
-    try {
-        engine_ = filament::Engine::create(backend);
-    } catch (...) {
-        std::cerr << "[FilamentRenderer] Failed to initialize Vulkan backend, falling back to OpenGL..." << std::endl;
-        engine_ = filament::Engine::create(filament::Engine::Backend::OPENGL);
-    }
+  try {
+    engine_ = filament::Engine::create(backend);
+  } catch (...) {
+    std::cerr << "[FilamentRenderer] Failed to initialize Vulkan backend, falling back to OpenGL..."
+              << std::endl;
+    engine_ = filament::Engine::create(filament::Engine::Backend::OPENGL);
+  }
 
-    if (!engine_) {
-        throw std::runtime_error("[FilamentRenderer] Could not initialize Google Filament engine.");
-    }
+  if (!engine_) {
+    throw std::runtime_error("[FilamentRenderer] Could not initialize Google Filament engine.");
+  }
 
-    swap_chain_ = engine_->createSwapChain(width_, height_, filament::SwapChain::CONFIG_READABLE);
-    renderer_ = engine_->createRenderer();
-    scene_ = engine_->createScene();
-    view_ = engine_->createView();
+  swap_chain_ = engine_->createSwapChain(width_, height_, filament::SwapChain::CONFIG_READABLE);
+  renderer_ = engine_->createRenderer();
+  scene_ = engine_->createScene();
+  view_ = engine_->createView();
 
-    camera_entity_ = utils::EntityManager::get().create();
-    camera_ = engine_->createCamera(camera_entity_);
+  camera_entity_ = utils::EntityManager::get().create();
+  camera_ = engine_->createCamera(camera_entity_);
 
-    ortho_camera_entity_ = utils::EntityManager::get().create();
-    ortho_camera_ = engine_->createCamera(ortho_camera_entity_);
+  ortho_camera_entity_ = utils::EntityManager::get().create();
+  ortho_camera_ = engine_->createCamera(ortho_camera_entity_);
 
-    view_->setCamera(camera_);
-    view_->setScene(scene_);
-    view_->setViewport(filament::Viewport(0, 0, width_, height_));
+  view_->setCamera(camera_);
+  view_->setScene(scene_);
+  view_->setViewport(filament::Viewport(0, 0, width_, height_));
 
-    // Post-processing options for clean sensor rendering (linear HDR colors)
-    view_->setPostProcessingEnabled(true);
-    view_->setDithering(filament::View::Dithering::NONE);
-    view_->setShadowingEnabled(true);
+  // Post-processing options for clean sensor rendering (linear HDR colors)
+  view_->setPostProcessingEnabled(true);
+  view_->setDithering(filament::View::Dithering::NONE);
+  view_->setShadowingEnabled(true);
 
-    setup_default_lighting();
+  setup_default_lighting();
 
-    sensor_intrinsics_.width = width_;
-    sensor_intrinsics_.height = height_;
-    sensor_intrinsics_.cx = width_ * 0.5;
-    sensor_intrinsics_.cy = height_ * 0.5;
-    intrinsics_ = sensor_intrinsics_;
-    update_camera_projection();
+  sensor_intrinsics_.width = width_;
+  sensor_intrinsics_.height = height_;
+  sensor_intrinsics_.cx = width_ * 0.5;
+  sensor_intrinsics_.cy = height_ * 0.5;
+  intrinsics_ = sensor_intrinsics_;
+  update_camera_projection();
 }
 
 void FilamentRenderer::cleanup() {
-    if (!engine_) return;
+  if (!engine_) return;
 
-    if (asset_ && asset_loader_) {
-        scene_->removeEntities(asset_->getEntities(), asset_->getEntityCount());
-        asset_loader_->destroyAsset(asset_);
-        asset_ = nullptr;
-    }
+  if (asset_ && asset_loader_) {
+    scene_->removeEntities(asset_->getEntities(), asset_->getEntityCount());
+    asset_loader_->destroyAsset(asset_);
+    asset_ = nullptr;
+  }
 
-    if (resource_loader_) {
-        delete resource_loader_;
-        resource_loader_ = nullptr;
-    }
+  if (resource_loader_) {
+    delete resource_loader_;
+    resource_loader_ = nullptr;
+  }
 
-    if (stb_provider_) {
-        delete stb_provider_;
-        stb_provider_ = nullptr;
-    }
+  if (stb_provider_) {
+    delete stb_provider_;
+    stb_provider_ = nullptr;
+  }
 
-    if (asset_loader_) {
-        gltfio::AssetLoader::destroy(&asset_loader_);
-        asset_loader_ = nullptr;
-    }
+  if (asset_loader_) {
+    gltfio::AssetLoader::destroy(&asset_loader_);
+    asset_loader_ = nullptr;
+  }
 
-    if (material_provider_) {
-        material_provider_->destroyMaterials();
-        delete material_provider_;
-        material_provider_ = nullptr;
-    }
+  if (material_provider_) {
+    material_provider_->destroyMaterials();
+    delete material_provider_;
+    material_provider_ = nullptr;
+  }
 
-    if (indirect_light_) {
-        engine_->destroy(indirect_light_);
-        indirect_light_ = nullptr;
-    }
+  if (indirect_light_) {
+    engine_->destroy(indirect_light_);
+    indirect_light_ = nullptr;
+  }
 
-    if (skybox_) {
-        engine_->destroy(skybox_);
-        skybox_ = nullptr;
-    }
+  if (skybox_) {
+    engine_->destroy(skybox_);
+    skybox_ = nullptr;
+  }
 
-    if (!sunlight_entity_.isNull()) {
-        if (scene_) {
-            scene_->remove(sunlight_entity_);
-        }
-        engine_->destroy(sunlight_entity_);
-        utils::EntityManager::get().destroy(sunlight_entity_);
-        sunlight_entity_ = utils::Entity();
-    }
-
-    if (ortho_camera_) {
-        engine_->destroyCameraComponent(ortho_camera_entity_);
-        utils::EntityManager::get().destroy(ortho_camera_entity_);
-        ortho_camera_ = nullptr;
-    }
-
-    if (camera_) {
-        engine_->destroyCameraComponent(camera_entity_);
-        utils::EntityManager::get().destroy(camera_entity_);
-        camera_ = nullptr;
-    }
-
-    if (view_) {
-        engine_->destroy(view_);
-        view_ = nullptr;
-    }
-
+  if (!sunlight_entity_.isNull()) {
     if (scene_) {
-        engine_->destroy(scene_);
-        scene_ = nullptr;
+      scene_->remove(sunlight_entity_);
     }
+    engine_->destroy(sunlight_entity_);
+    utils::EntityManager::get().destroy(sunlight_entity_);
+    sunlight_entity_ = utils::Entity();
+  }
 
-    if (renderer_) {
-        engine_->destroy(renderer_);
-        renderer_ = nullptr;
-    }
+  if (ortho_camera_) {
+    engine_->destroyCameraComponent(ortho_camera_entity_);
+    utils::EntityManager::get().destroy(ortho_camera_entity_);
+    ortho_camera_ = nullptr;
+  }
 
-    if (swap_chain_) {
-        engine_->destroy(swap_chain_);
-        swap_chain_ = nullptr;
-    }
+  if (camera_) {
+    engine_->destroyCameraComponent(camera_entity_);
+    utils::EntityManager::get().destroy(camera_entity_);
+    camera_ = nullptr;
+  }
 
-    if (ortho_swap_chain_) {
-        engine_->destroy(ortho_swap_chain_);
-        ortho_swap_chain_ = nullptr;
-    }
+  if (view_) {
+    engine_->destroy(view_);
+    view_ = nullptr;
+  }
 
-    filament::Engine::destroy(&engine_);
-    engine_ = nullptr;
+  if (scene_) {
+    engine_->destroy(scene_);
+    scene_ = nullptr;
+  }
+
+  if (renderer_) {
+    engine_->destroy(renderer_);
+    renderer_ = nullptr;
+  }
+
+  if (swap_chain_) {
+    engine_->destroy(swap_chain_);
+    swap_chain_ = nullptr;
+  }
+
+  if (ortho_swap_chain_) {
+    engine_->destroy(ortho_swap_chain_);
+    ortho_swap_chain_ = nullptr;
+  }
+
+  filament::Engine::destroy(&engine_);
+  engine_ = nullptr;
 }
 
 void FilamentRenderer::update_camera_projection() {
-    if (!camera_) return;
+  if (!camera_) return;
 
-    double sensor_w = std::max(1.0, static_cast<double>(sensor_intrinsics_.width));
-    double sensor_h = std::max(1.0, static_cast<double>(sensor_intrinsics_.height));
-    double fy = (sensor_intrinsics_.fy > 1e-4) ? sensor_intrinsics_.fy : 400.0;
+  double sensor_w = std::max(1.0, static_cast<double>(sensor_intrinsics_.width));
+  double sensor_h = std::max(1.0, static_cast<double>(sensor_intrinsics_.height));
+  double fy = (sensor_intrinsics_.fy > 1e-4) ? sensor_intrinsics_.fy : 400.0;
 
-    double sensor_aspect = sensor_w / sensor_h;
-    double vp_w = std::max(1.0, static_cast<double>(width_));
-    double vp_h = std::max(1.0, static_cast<double>(height_));
-    double vp_aspect = vp_w / vp_h;
+  double sensor_aspect = sensor_w / sensor_h;
+  double vp_w = std::max(1.0, static_cast<double>(width_));
+  double vp_h = std::max(1.0, static_cast<double>(height_));
+  double vp_aspect = vp_w / vp_h;
 
-    // Preserve exact physical sensor framing inside the viewport:
-    // If vp_aspect >= sensor_aspect, sensor frame spans full viewport height, so fov_y matches sensor.
-    // If vp_aspect < sensor_aspect, sensor frame spans full viewport width, so fov_y expands by (sensor_aspect / vp_aspect).
-    double tan_half_fov_y_sensor = 0.5 * sensor_h / fy;
-    double scale = std::max(1.0, sensor_aspect / vp_aspect);
-    double tan_half_fov_y_vp = scale * tan_half_fov_y_sensor;
-    double fov_y_deg = 2.0 * std::atan(tan_half_fov_y_vp) * 180.0 / std::numbers::pi;
+  // Preserve exact physical sensor framing inside the viewport:
+  // If vp_aspect >= sensor_aspect, sensor frame spans full viewport height, so fov_y matches
+  // sensor. If vp_aspect < sensor_aspect, sensor frame spans full viewport width, so fov_y expands
+  // by (sensor_aspect / vp_aspect).
+  double tan_half_fov_y_sensor = 0.5 * sensor_h / fy;
+  double scale = std::max(1.0, sensor_aspect / vp_aspect);
+  double tan_half_fov_y_vp = scale * tan_half_fov_y_sensor;
+  double fov_y_deg = 2.0 * std::atan(tan_half_fov_y_vp) * 180.0 / std::numbers::pi;
 
-    intrinsics_.width = width_;
-    intrinsics_.height = height_;
-    intrinsics_.cx = width_ * 0.5;
-    intrinsics_.cy = height_ * 0.5;
+  intrinsics_.width = width_;
+  intrinsics_.height = height_;
+  intrinsics_.cx = width_ * 0.5;
+  intrinsics_.cy = height_ * 0.5;
 
-    camera_->setProjection(fov_y_deg, vp_aspect, sensor_intrinsics_.near_plane, sensor_intrinsics_.far_plane, filament::Camera::Fov::VERTICAL);
+  camera_->setProjection(fov_y_deg, vp_aspect, sensor_intrinsics_.near_plane,
+                         sensor_intrinsics_.far_plane, filament::Camera::Fov::VERTICAL);
 }
 
 void FilamentRenderer::resize_camera(uint32_t width, uint32_t height) {
-    if (width < 32) width = 32;
-    if (height < 32) height = 32;
+  if (width < 32) width = 32;
+  if (height < 32) height = 32;
 
-    if (width == width_ && height == height_ && swap_chain_) return;
+  if (width == width_ && height == height_ && swap_chain_) return;
 
-    width_ = width;
-    height_ = height;
+  width_ = width;
+  height_ = height;
 
-    if (engine_) {
-        if (swap_chain_) {
-            engine_->destroy(swap_chain_);
-            swap_chain_ = nullptr;
-        }
-        swap_chain_ = engine_->createSwapChain(width_, height_, filament::SwapChain::CONFIG_READABLE);
-        if (view_) {
-            view_->setViewport(filament::Viewport(0, 0, width_, height_));
-        }
+  if (engine_) {
+    if (swap_chain_) {
+      engine_->destroy(swap_chain_);
+      swap_chain_ = nullptr;
     }
+    swap_chain_ = engine_->createSwapChain(width_, height_, filament::SwapChain::CONFIG_READABLE);
+    if (view_) {
+      view_->setViewport(filament::Viewport(0, 0, width_, height_));
+    }
+  }
 
-    update_camera_projection();
+  update_camera_projection();
 
-    readback_scratch_.resize(width_ * height_ * 3, 0);
+  readback_scratch_.resize(width_ * height_ * 3, 0);
 }
 
 void FilamentRenderer::set_intrinsics(const CameraIntrinsics& intrinsics) {
-    sensor_intrinsics_ = intrinsics;
-    intrinsics_ = intrinsics;
-    update_camera_projection();
+  sensor_intrinsics_ = intrinsics;
+  intrinsics_ = intrinsics;
+  update_camera_projection();
 }
 
-void FilamentRenderer::set_camera_pose(const Eigen::Vector3d& position, const Eigen::Quaterniond& orientation) {
-    if (!camera_) return;
+void FilamentRenderer::set_camera_pose(const Eigen::Vector3d& position,
+                                       const Eigen::Quaterniond& orientation) {
+  if (!camera_) return;
 
-    Eigen::Matrix3d R = orientation.toRotationMatrix();
-    filament::math::mat4f model;
+  Eigen::Matrix3d R = orientation.toRotationMatrix();
+  filament::math::mat4f model;
 
-    // Col 0, 1, 2, 3
-    model[0] = filament::math::float4(R(0, 0), R(1, 0), R(2, 0), 0.0f);
-    model[1] = filament::math::float4(R(0, 1), R(1, 1), R(2, 1), 0.0f);
-    model[2] = filament::math::float4(R(0, 2), R(1, 2), R(2, 2), 0.0f);
-    model[3] = filament::math::float4(position.x(), position.y(), position.z(), 1.0f);
+  // Col 0, 1, 2, 3
+  model[0] = filament::math::float4(R(0, 0), R(1, 0), R(2, 0), 0.0f);
+  model[1] = filament::math::float4(R(0, 1), R(1, 1), R(2, 1), 0.0f);
+  model[2] = filament::math::float4(R(0, 2), R(1, 2), R(2, 2), 0.0f);
+  model[3] = filament::math::float4(position.x(), position.y(), position.z(), 1.0f);
 
-    camera_->setModelMatrix(model);
+  camera_->setModelMatrix(model);
 }
 
-bool FilamentRenderer::render_frame(uint8_t* out_rgb_buffer, size_t buffer_size, uint64_t timestamp_us) {
-    if (!renderer_ || !swap_chain_ || !view_) return false;
-    size_t expected_size = width_ * height_ * 3;
-    if (buffer_size < expected_size) return false;
+bool FilamentRenderer::render_frame(uint8_t* out_rgb_buffer, size_t buffer_size,
+                                    uint64_t timestamp_us) {
+  if (!renderer_ || !swap_chain_ || !view_) return false;
+  size_t expected_size = width_ * height_ * 3;
+  if (buffer_size < expected_size) return false;
 
-    if (renderer_->beginFrame(swap_chain_)) {
-        renderer_->render(view_);
+  if (renderer_->beginFrame(swap_chain_)) {
+    renderer_->render(view_);
 
-        struct CallbackUserData {
-            uint8_t* dst;
-            size_t size;
-            bool done{false};
-        };
+    struct CallbackUserData {
+      uint8_t* dst;
+      size_t size;
+      bool done{false};
+    };
 
-        CallbackUserData ud{out_rgb_buffer, expected_size, false};
+    CallbackUserData ud{out_rgb_buffer, expected_size, false};
 
-        filament::backend::PixelBufferDescriptor pbd(
-            out_rgb_buffer,
-            expected_size,
-            filament::backend::PixelDataFormat::RGB,
-            filament::backend::PixelDataType::UBYTE,
-            [](void* buffer, size_t size, void* user) {
-                auto* cb = static_cast<CallbackUserData*>(user);
-                cb->done = true;
-            },
-            &ud
-        );
+    filament::backend::PixelBufferDescriptor pbd(
+        out_rgb_buffer, expected_size, filament::backend::PixelDataFormat::RGB,
+        filament::backend::PixelDataType::UBYTE,
+        [](void* buffer, size_t size, void* user) {
+          auto* cb = static_cast<CallbackUserData*>(user);
+          cb->done = true;
+        },
+        &ud);
 
-        renderer_->readPixels(0, 0, width_, height_, std::move(pbd));
-        renderer_->endFrame();
-        engine_->flushAndWait();
-        return true;
-    }
-    return false;
+    renderer_->readPixels(0, 0, width_, height_, std::move(pbd));
+    renderer_->endFrame();
+    engine_->flushAndWait();
+    return true;
+  }
+  return false;
 }
 
-bool FilamentRenderer::render_ortho_frame(int ortho_idx,
-                                          const Eigen::Vector2d& pan,
-                                          double scale,
-                                          float canvas_w,
-                                          float canvas_h,
-                                          uint8_t* out_rgb_buffer,
+bool FilamentRenderer::render_ortho_frame(int ortho_idx, const Eigen::Vector2d& pan, double scale,
+                                          float canvas_w, float canvas_h, uint8_t* out_rgb_buffer,
                                           size_t buffer_size) {
-    if (!renderer_ || !view_ || !ortho_camera_ || !engine_) return false;
+  if (!renderer_ || !view_ || !ortho_camera_ || !engine_) return false;
 
-    uint32_t target_w = std::clamp(static_cast<uint32_t>(canvas_w), 32u, 3840u);
-    uint32_t target_h = std::clamp(static_cast<uint32_t>(canvas_h), 32u, 2160u);
-    target_w = (target_w + 3) & ~3u;
-    target_h = (target_h + 1) & ~1u;
+  uint32_t target_w = std::clamp(static_cast<uint32_t>(canvas_w), 32u, 3840u);
+  uint32_t target_h = std::clamp(static_cast<uint32_t>(canvas_h), 32u, 2160u);
+  target_w = (target_w + 3) & ~3u;
+  target_h = (target_h + 1) & ~1u;
 
-    size_t expected_size = static_cast<size_t>(target_w) * target_h * 3;
-    if (buffer_size < expected_size) return false;
+  size_t expected_size = static_cast<size_t>(target_w) * target_h * 3;
+  if (buffer_size < expected_size) return false;
 
-    if (!ortho_swap_chain_ || ortho_w_ != target_w || ortho_h_ != target_h) {
-        if (ortho_swap_chain_) {
-            engine_->destroy(ortho_swap_chain_);
-            ortho_swap_chain_ = nullptr;
-        }
-        ortho_swap_chain_ = engine_->createSwapChain(target_w, target_h, filament::SwapChain::CONFIG_READABLE);
-        ortho_w_ = target_w;
-        ortho_h_ = target_h;
+  if (!ortho_swap_chain_ || ortho_w_ != target_w || ortho_h_ != target_h) {
+    if (ortho_swap_chain_) {
+      engine_->destroy(ortho_swap_chain_);
+      ortho_swap_chain_ = nullptr;
     }
+    ortho_swap_chain_ =
+        engine_->createSwapChain(target_w, target_h, filament::SwapChain::CONFIG_READABLE);
+    ortho_w_ = target_w;
+    ortho_h_ = target_h;
+  }
 
-    if (!ortho_swap_chain_) return false;
+  if (!ortho_swap_chain_) return false;
 
-    double s = std::max(0.0001, scale);
-    double cw = std::max(10.0, static_cast<double>(target_w));
-    double ch = std::max(10.0, static_cast<double>(target_h));
-    double half_w = (cw * 0.5) / s;
-    double half_h = (ch * 0.5) / s;
+  double s = std::max(0.0001, scale);
+  double cw = std::max(10.0, static_cast<double>(target_w));
+  double ch = std::max(10.0, static_cast<double>(target_h));
+  double half_w = (cw * 0.5) / s;
+  double half_h = (ch * 0.5) / s;
 
-    double near_plane = 1.0;
-    double far_plane = 100000.0;
-    ortho_camera_->setProjection(filament::Camera::Projection::ORTHO,
-                                 -half_w, half_w, -half_h, half_h,
-                                 near_plane, far_plane);
+  double near_plane = 1.0;
+  double far_plane = 100000.0;
+  ortho_camera_->setProjection(filament::Camera::Projection::ORTHO, -half_w, half_w, -half_h,
+                               half_h, near_plane, far_plane);
 
-    filament::math::mat4f model;
-    float dist = 25000.0f; // Far enough outside scene bounds
+  filament::math::mat4f model;
+  float dist = 25000.0f;  // Far enough outside scene bounds
 
-    if (ortho_idx == 0) {
-        // Top View (X-Z plane): Looking down -Y from above (+Y)
-        // Screen Right = World +X, Screen Top = World -Z, Screen Bottom = World +Z
-        model[0] = filament::math::float4(1.0f, 0.0f, 0.0f, 0.0f);   // Right = +X
-        model[1] = filament::math::float4(0.0f, 0.0f, -1.0f, 0.0f);  // Up = -Z
-        model[2] = filament::math::float4(0.0f, 1.0f, 0.0f, 0.0f);   // Back = +Y
-        model[3] = filament::math::float4(static_cast<float>(pan.x()), dist, static_cast<float>(pan.y()), 1.0f);
-    } else if (ortho_idx == 1) {
-        // Front View (X-Y plane): Looking along -Z into screen (+Z to -Z)
-        // Screen Right = World +X, Screen Top = World +Y
-        model[0] = filament::math::float4(1.0f, 0.0f, 0.0f, 0.0f);   // Right = +X
-        model[1] = filament::math::float4(0.0f, 1.0f, 0.0f, 0.0f);   // Up = +Y
-        model[2] = filament::math::float4(0.0f, 0.0f, 1.0f, 0.0f);   // Back = +Z
-        model[3] = filament::math::float4(static_cast<float>(pan.x()), static_cast<float>(pan.y()), dist, 1.0f);
-    } else {
-        // Side View (Z-Y plane): Looking along +X from -X
-        // Screen Right = World +Z, Screen Top = World +Y, Screen Look = World +X
-        model[0] = filament::math::float4(0.0f, 0.0f, 1.0f, 0.0f);   // Right = +Z
-        model[1] = filament::math::float4(0.0f, 1.0f, 0.0f, 0.0f);   // Up = +Y
-        model[2] = filament::math::float4(-1.0f, 0.0f, 0.0f, 0.0f);  // Back = -X
-        model[3] = filament::math::float4(-dist, static_cast<float>(pan.y()), static_cast<float>(pan.x()), 1.0f);
-    }
+  if (ortho_idx == 0) {
+    // Top View (X-Z plane): Looking down -Y from above (+Y)
+    // Screen Right = World +X, Screen Top = World -Z, Screen Bottom = World +Z
+    model[0] = filament::math::float4(1.0f, 0.0f, 0.0f, 0.0f);   // Right = +X
+    model[1] = filament::math::float4(0.0f, 0.0f, -1.0f, 0.0f);  // Up = -Z
+    model[2] = filament::math::float4(0.0f, 1.0f, 0.0f, 0.0f);   // Back = +Y
+    model[3] = filament::math::float4(static_cast<float>(pan.x()), dist,
+                                      static_cast<float>(pan.y()), 1.0f);
+  } else if (ortho_idx == 1) {
+    // Front View (X-Y plane): Looking along -Z into screen (+Z to -Z)
+    // Screen Right = World +X, Screen Top = World +Y
+    model[0] = filament::math::float4(1.0f, 0.0f, 0.0f, 0.0f);  // Right = +X
+    model[1] = filament::math::float4(0.0f, 1.0f, 0.0f, 0.0f);  // Up = +Y
+    model[2] = filament::math::float4(0.0f, 0.0f, 1.0f, 0.0f);  // Back = +Z
+    model[3] = filament::math::float4(static_cast<float>(pan.x()), static_cast<float>(pan.y()),
+                                      dist, 1.0f);
+  } else {
+    // Side View (Z-Y plane): Looking along +X from -X
+    // Screen Right = World +Z, Screen Top = World +Y, Screen Look = World +X
+    model[0] = filament::math::float4(0.0f, 0.0f, 1.0f, 0.0f);   // Right = +Z
+    model[1] = filament::math::float4(0.0f, 1.0f, 0.0f, 0.0f);   // Up = +Y
+    model[2] = filament::math::float4(-1.0f, 0.0f, 0.0f, 0.0f);  // Back = -X
+    model[3] = filament::math::float4(-dist, static_cast<float>(pan.y()),
+                                      static_cast<float>(pan.x()), 1.0f);
+  }
 
-    ortho_camera_->setModelMatrix(model);
+  ortho_camera_->setModelMatrix(model);
 
-    view_->setCamera(ortho_camera_);
-    view_->setViewport(filament::Viewport(0, 0, target_w, target_h));
+  view_->setCamera(ortho_camera_);
+  view_->setViewport(filament::Viewport(0, 0, target_w, target_h));
 
-    bool success = false;
-    if (renderer_->beginFrame(ortho_swap_chain_)) {
-        renderer_->render(view_);
+  bool success = false;
+  if (renderer_->beginFrame(ortho_swap_chain_)) {
+    renderer_->render(view_);
 
-        struct CallbackUserData {
-            uint8_t* dst;
-            size_t size;
-            bool done{false};
-        };
-        CallbackUserData ud{out_rgb_buffer, expected_size, false};
+    struct CallbackUserData {
+      uint8_t* dst;
+      size_t size;
+      bool done{false};
+    };
+    CallbackUserData ud{out_rgb_buffer, expected_size, false};
 
-        filament::backend::PixelBufferDescriptor pbd(
-            out_rgb_buffer,
-            expected_size,
-            filament::backend::PixelDataFormat::RGB,
-            filament::backend::PixelDataType::UBYTE,
-            [](void* buffer, size_t size, void* user) {
-                auto* cb = static_cast<CallbackUserData*>(user);
-                cb->done = true;
-            },
-            &ud
-        );
+    filament::backend::PixelBufferDescriptor pbd(
+        out_rgb_buffer, expected_size, filament::backend::PixelDataFormat::RGB,
+        filament::backend::PixelDataType::UBYTE,
+        [](void* buffer, size_t size, void* user) {
+          auto* cb = static_cast<CallbackUserData*>(user);
+          cb->done = true;
+        },
+        &ud);
 
-        renderer_->readPixels(0, 0, target_w, target_h, std::move(pbd));
-        renderer_->endFrame();
-        engine_->flushAndWait();
-        success = true;
-    }
+    renderer_->readPixels(0, 0, target_w, target_h, std::move(pbd));
+    renderer_->endFrame();
+    engine_->flushAndWait();
+    success = true;
+  }
 
-    // Restore sensor camera and its viewport
-    view_->setCamera(camera_);
-    view_->setViewport(filament::Viewport(0, 0, width_, height_));
-    return success;
+  // Restore sensor camera and its viewport
+  view_->setCamera(camera_);
+  view_->setViewport(filament::Viewport(0, 0, width_, height_));
+  return success;
 }
 
 size_t FilamentRenderer::render_batch(const std::vector<Eigen::Vector3d>& positions,
-                                     const std::vector<Eigen::Quaterniond>& orientations,
-                                     const std::vector<uint64_t>& timestamps_us,
-                                     RingBuffer& ring_buffer) {
-    size_t num_frames = positions.size();
-    size_t rendered = 0;
-    size_t frame_bytes = width_ * height_ * 3;
+                                      const std::vector<Eigen::Quaterniond>& orientations,
+                                      const std::vector<uint64_t>& timestamps_us,
+                                      RingBuffer& ring_buffer) {
+  size_t num_frames = positions.size();
+  size_t rendered = 0;
+  size_t frame_bytes = width_ * height_ * 3;
 
-    for (size_t i = 0; i < num_frames; ++i) {
-        set_camera_pose(positions[i], orientations[i]);
-        uint64_t t_us = (i < timestamps_us.size()) ? timestamps_us[i] : 0;
+  for (size_t i = 0; i < num_frames; ++i) {
+    set_camera_pose(positions[i], orientations[i]);
+    uint64_t t_us = (i < timestamps_us.size()) ? timestamps_us[i] : 0;
 
-        if (render_frame(readback_scratch_.data(), frame_bytes, t_us)) {
-            ring_buffer.push(readback_scratch_.data(), frame_bytes, t_us);
-            rendered++;
-        }
+    if (render_frame(readback_scratch_.data(), frame_bytes, t_us)) {
+      ring_buffer.push(readback_scratch_.data(), frame_bytes, t_us);
+      rendered++;
     }
-    return rendered;
+  }
+  return rendered;
 }
 
-} // namespace hesim3d
+}  // namespace hesim3d
