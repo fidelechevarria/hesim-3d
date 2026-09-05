@@ -56,6 +56,7 @@ cmake.version = ">=3.20"
 cmake.build-type = "Release"
 ninja.make-fallback = true
 wheel.packages = ["src/hesim3d"]
+sdist.inclusion-mode = "explicit"
 sdist.include = [
     "src/**/*",
     "assets/**/*",
@@ -65,12 +66,17 @@ sdist.include = [
     "LICENSE",
 ]
 sdist.exclude = [
-    "tests/**/*",
-    "docs/**/*",
-    "outputs/**/*",
+    "tests",
+    "docs",
+    "outputs",
     "*.cache",
-    "src/hesim3d/*.so*",
+    "__pycache__/",
+    "*.pyc",
+    "*.so",
+    "*.so.*",
 ]
+
+
 
 [tool.scikit-build.cmake.define]
 HESIM3D_BUILD_GUI = "ON"
