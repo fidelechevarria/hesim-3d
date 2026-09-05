@@ -192,10 +192,15 @@ target_link_libraries(_hesim3d_core PRIVATE
     ${CMAKE_DL_LIBS}
 )
 
+target_link_options(_hesim3d_core PRIVATE
+    "-Wl,-z,noexecstack"
+)
+
 set_target_properties(_hesim3d_core PROPERTIES
     BUILD_RPATH "$ORIGIN"
     INSTALL_RPATH "$ORIGIN"
 )
+
 
 # Linux system libraries for graphics
 if(UNIX AND NOT APPLE)
