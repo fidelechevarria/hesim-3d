@@ -234,8 +234,4 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts" DESTINATION hesim3d
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/scenes" DESTINATION hesim3d/assets_data)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/sensor_presets" DESTINATION hesim3d/assets_data)
 
-add_custom_command(TARGET _hesim3d_core POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_hesim3d_core> "${CMAKE_CURRENT_SOURCE_DIR}/src/hesim3d/"
-    COMMENT "Auto-syncing _hesim3d_core to src/hesim3d/"
-)
 
