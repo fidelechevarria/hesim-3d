@@ -6,7 +6,9 @@ __pycache__/
 *$py.class
 *.so
 *.so.*
+!src/hesim3d/libc++*
 *.pyd
+
 *.dylib
 
 # Environments & Packaging
@@ -46,11 +48,9 @@ compile_commands.json
 *.ninja
 .ninja_*
 
-# Toolchain & Libc++ generated headers / vendored binaries
-src/cpp/libcxx_include/
-src/hesim3d/libc++*
-src/hesim3d/*.so*
+# Compiled Python extension binaries
 src/hesim3d/_hesim3d_core*
+
 
 # Filament & Third-party builds
 third_party/filament/build/

@@ -72,9 +72,9 @@ sdist.exclude = [
     "*.cache",
     "__pycache__/",
     "*.pyc",
-    "*.so",
-    "*.so.*",
+    "src/hesim3d/_hesim3d_core*",
 ]
+
 
 
 
