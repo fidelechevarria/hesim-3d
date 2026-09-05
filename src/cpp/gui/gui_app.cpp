@@ -2023,8 +2023,7 @@ bool GuiApp::init() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
   window_ = glfwCreateWindow(config_.window_width, config_.window_height,
-                             "hesim-3d | Google Earth Studio Trajectory Editor & Simulator",
-                             nullptr, nullptr);
+                             "hesim-3d | Hybrid Event-Frame Sensor Simulation", nullptr, nullptr);
   if (!window_) {
     std::cerr << "[GuiApp] Failed to create GLFW window." << std::endl;
     glfwTerminate();
